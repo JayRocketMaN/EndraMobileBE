@@ -1,0 +1,26 @@
+services:
+  endra-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000" # Exposes your FastAPI endpoints to your mobile/web apps
+    environment:
+      - GO2RTC_URL=http://go2rtc:1984 # Tells FastAPI how to talk to go2rtc internally
+    env_file:
+      - .env
+    depends_on:
+      - go2rtc
+    restart: unless-stopped
+
+  go2rtc:
+    image: alexxit/go2rtc:latest
+    ports:
+      - "8554:8554"     # Inbound RTSP port: Receives streaming feeds from Edge Gateways
+      - "8555:8555/tcp" # WebRTC Signaling port: Handles browser handshakes
+      - "8555:8555/udp" # WebRTC Media traffic: Crucial for playing real-time video
+    environment:
+      - PUBLIC_IP=${PUBLIC_IP} # Injects the public server IP into go2rtc config
+    volumes:
+      - ./go2rtc.yaml:/config/go2rtc.yaml
+    restart: unless-stopped

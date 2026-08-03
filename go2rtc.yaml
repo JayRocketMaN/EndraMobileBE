@@ -1,0 +1,17 @@
+api:
+  listen: ":1984" # Listens internally. NOT exposed in docker-compose ports for security.
+
+rtsp:
+  listen: ":8554" # Open doorway that catches incoming video pushed up by your edge gateways
+
+webrtc:
+  listen: ":8555" # Public doorway used by iOS, Android, and web dashboard canvas players
+  candidates:
+    - stun:://google.com # Resolves asymmetric routing issues dynamically
+    - ${PUBLIC_IP}:8555            # Announces your server's true internet address
+
+log:
+  level: info
+  format: text
+
+streams: {} # Empty by default. Your FastAPI app will populate this using the API.
