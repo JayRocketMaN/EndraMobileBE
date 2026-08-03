@@ -1,0 +1,8 @@
+# Ignore local and server-specific video transport configs
+go2rtc.yaml
+.env
+
+# Standard Python system clutter
+__pycache__/
+*.pyc
+.pytest_cache/
