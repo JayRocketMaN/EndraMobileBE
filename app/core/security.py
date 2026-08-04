@@ -1,9 +1,10 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from fastapi import Request, Response, HTTPException, status, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError
 import bcrypt  
-from cryptography.fernet import Fernet # New addition for camera encryption
+from cryptography.fernet import Fernet 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -11,17 +12,15 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.models.mobile_user_model import User
 
+# Optional bearer extraction utility helper to prevent API route clutter
+security_bearer = HTTPBearer(auto_error=False)
 
 # =====================================================================
 # SYMMETRIC ENCRYPTION ENGINE (For Camera Stream Passwords)
 # =====================================================================
-
-# Ensure settings.SECRET_KEY is a valid 32-byte URL-safe base64 string for Fernet
-# If you run into padding errors, use a dedicated key variable in your .env
 try:
     fernet_cipher = Fernet(settings.SECRET_KEY.encode('utf-8')[:32].ljust(32, b'='))
 except Exception:
-    # Safe fallback wrapper to ensure it initializes regardless of key length
     import base64
     import hashlib
     key_hash = hashlib.sha256(settings.SECRET_KEY.encode('utf-8')).digest()
@@ -78,7 +77,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 
 
 # =====================================================================
-# COOKIE DELIVERY SYSTEM
+# COOKIE DELIVERY SYSTEM (Kept for Web Dashboard Compatibility)
 # =====================================================================
 def set_auth_cookie(response: Response, token: str) -> None:
     """Injects the JWT access token directly into client's browser using HttpOnly cookies."""
@@ -93,46 +92,67 @@ def set_auth_cookie(response: Response, token: str) -> None:
 
 
 # =====================================================================
-# COOKIE-BASED AUTHENTICATION DEPENDENCY
+# DUAL COOKIE-HEADER AUTHENTICATION DEPENDENCY (Supports Web & Flutter)
 # =====================================================================
-async def get_current_user(request: Request, db: AsyncSession = Depends(get_db)) -> User:
-    """Extracts JWT token from HttpOnly cookies and returns current database User."""
-    token_cookie = request.cookies.get("access_token")
-    
-    if not token_cookie:
+async def get_current_user(
+    request: Request, 
+    header_cred: Optional[HTTPAuthorizationCredentials] = Depends(security_bearer),
+    db: AsyncSession = Depends(get_db)
+) -> User:
+    """
+    Extracts JWT from browser HttpOnly cookies OR fallback HTTP Authorization headers,
+    verifying identity parameters against dual multi-tenant registration entries.
+    """
+    token: Optional[str] = None
+
+    # 1. Attempt extraction via standard HTTP Authorization Header (Primary path for Mobile Flutter)
+    if header_cred:
+        token = header_cred.credentials
+
+    # 2. Fallback check: Extract from cookie layer structure if header is missing (Primary path for Web)
+    if not token:
+        token_cookie = request.cookies.get("access_token")
+        if token_cookie:
+            if token_cookie.startswith("Bearer "):
+                token = token_cookie.split(" ")[1]
+            else:
+                token = token_cookie
+
+    # 3. Assert a valid payload exists across both vector channels
+    if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication credentials missing from cookie session context."
+            detail="Session identification credentials missing from transaction context."
         )
     
     try:
-        if token_cookie.startswith("Bearer "):
-            token = token_cookie.split(" ")[1]
-        else:
-            token = token_cookie
-
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        email: str = payload.get("sub")
+        identity_subject: str = payload.get("sub") # Holds Email address OR Phone string payload
 
-        if email is None:
+        if identity_subject is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid session token payload context."
+                detail="Invalid session token identification context structure."
             )
             
     except JWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Session token has expired or is cryptographically corrupted."
+            detail="Authentication token has expired or is cryptographically corrupted."
         )
 
-    result = await db.execute(select(User).where(User.email == email))
+    # 4. Asynchronously search PostgreSQL across both identifier indices simultaneously
+    result = await db.execute(
+        select(User).where(
+            (User.email == identity_subject) | (User.phone_number == identity_subject)
+        )
+    )
     user = result.scalar_one_or_none()
     
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authenticated user record no longer exists in the system engine."
+            detail="Authenticated resource profile no longer exists in the platform core."
         )
         
     return user

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, status
+"""from fastapi import APIRouter, HTTPException, status
 import app.schemas.onboarding_schema as schemas
 
 router = APIRouter(prefix="/api/v1/onboarding", tags=["User Onboarding & Setup"])
@@ -43,9 +43,9 @@ async def select_protection_use_case(request: schemas.ProtectionSelectionRequest
     }
 
 
-@router.post("/emergency-contacts", response_model=schemas.EmergencyContact)
-async def add_emergency_contact(contact: schemas.EmergencyContact):
-    return schemas.EmergencyContact(
+@router.post("/emergency-contacts", response_model=schemas.EmergencyContactResponse)
+async def add_emergency_contact(contact: schemas.CreateEmergencyContactRequest):
+    return schemas.EmergencyContactResponse(
         id="cnt_001",
         full_name=contact.full_name,
         relationship=contact.relationship,
@@ -71,4 +71,4 @@ async def register_property(payload: schemas.AddPropertyRequest):
         property_type=payload.property_type,
         latitude=6.4474,
         longitude=3.4723
-    )
+    )"""

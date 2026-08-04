@@ -1,6 +1,6 @@
 import random
 from datetime import datetime, timedelta
-from fastapi import APIRouter, Depends, HTTPException, Status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from pwdlib import PasswordHash
@@ -20,6 +20,8 @@ from app.schemas.mobile_user_schema import (
     ValidateSOSPinRequestSchema,
     ValidateSOSPinResponseSchema,
     SelectUseCaseRequestSchema,
+    CreateEmergencyContactSchema,
+    EmergencyContactResponseSchema,
     UpdateAccountSetupStepSchema,
     UpdateAppPermissionsSchema,
     CompleteOnboardingSchema,
@@ -35,7 +37,7 @@ password_hash = PasswordHash.recommended()
 # Registration & Authentication
 # ==========================================
 
-@router.post("/register", response_model=MobileUserResponseSchema, status_code=Status.HTTP_201_CREATED)
+@router.post("/register", response_model=MobileUserResponseSchema, status_code=status.HTTP_201_CREATED)
 async def register_mobile_user(
     payload: MobileUserRegisterSchema,
     db: AsyncSession = Depends(get_db)
@@ -45,7 +47,7 @@ async def register_mobile_user(
     result = await db.execute(query)
     if result.scalar_one_or_none():
         raise HTTPException(
-            status_code=Status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail="Mobile user with this phone number already exists."
         )
 
@@ -55,7 +57,7 @@ async def register_mobile_user(
         email_result = await db.execute(email_query)
         if email_result.scalar_one_or_none():
             raise HTTPException(
-                status_code=Status.HTTP_400_BAD_REQUEST,
+                status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Mobile user with this email already exists."
             )
 
@@ -84,7 +86,7 @@ async def login_mobile_user(
 ):
     if not payload.email and not payload.phone_number:
         raise HTTPException(
-            status_code=Status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail="Please provide either an email or phone number to log in."
         )
 
@@ -100,7 +102,7 @@ async def login_mobile_user(
     # Verify password hash
     if not user or not password_hash.verify(payload.password, user.hashed_password):
         raise HTTPException(
-            status_code=Status.HTTP_401_UNAUTHORIZED,
+            status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials."
         )
 
@@ -122,7 +124,7 @@ async def send_phone_otp(
 
     if not user:
         raise HTTPException(
-            status_code=Status.HTTP_404_NOT_FOUND,
+            status_code=status.HTTP_404_NOT_FOUND,
             detail="User with this phone number not found."
         )
 
@@ -152,19 +154,19 @@ async def verify_phone_otp(
 
     if not user:
         raise HTTPException(
-            status_code=Status.HTTP_404_NOT_FOUND,
+            status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found."
         )
 
     if not user.phone_otp_code or user.phone_otp_code != payload.otp_code:
         raise HTTPException(
-            status_code=Status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid OTP code."
         )
 
     if user.phone_otp_expires_at and datetime.utcnow() > user.phone_otp_expires_at:
         raise HTTPException(
-            status_code=Status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail="OTP code has expired. Please request a new one."
         )
 
@@ -195,7 +197,7 @@ async def send_email_otp(
 
     if not user:
         raise HTTPException(
-            status_code=Status.HTTP_404_NOT_FOUND,
+            status_code=status.HTTP_404_NOT_FOUND,
             detail="User with this email not found."
         )
 
@@ -225,19 +227,19 @@ async def verify_email_otp(
 
     if not user:
         raise HTTPException(
-            status_code=Status.HTTP_404_NOT_FOUND,
+            status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found."
         )
 
     if not user.email_otp_code or user.email_otp_code != payload.otp_code:
         raise HTTPException(
-            status_code=Status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid verification code."
         )
 
     if user.email_otp_expires_at and datetime.utcnow() > user.email_otp_expires_at:
         raise HTTPException(
-            status_code=Status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail="Verification code has expired. Please request a new one."
         )
 
@@ -268,7 +270,7 @@ async def setup_user_pins(
     """
     if payload.normal_pin == payload.duress_pin:
         raise HTTPException(
-            status_code=Status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail="Normal PIN and Duress PIN cannot be the same."
         )
 
@@ -278,7 +280,7 @@ async def setup_user_pins(
 
     if not user:
         raise HTTPException(
-            status_code=Status.HTTP_404_NOT_FOUND,
+            status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found."
         )
 
@@ -314,7 +316,7 @@ async def verify_sos_cancellation_pin(
 
     if not user or not user.hashed_normal_pin or not user.hashed_duress_pin:
         raise HTTPException(
-            status_code=Status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail="User PINs are not configured."
         )
 
@@ -334,7 +336,7 @@ async def verify_sos_cancellation_pin(
 
     # 3. Invalid PIN
     raise HTTPException(
-        status_code=Status.HTTP_401_UNAUTHORIZED,
+        status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid PIN code."
     )
 
@@ -358,7 +360,7 @@ async def select_primary_use_case(
 
     if not user:
         raise HTTPException(
-            status_code=Status.HTTP_404_NOT_FOUND,
+            status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found."
         )
 
@@ -370,6 +372,18 @@ async def select_primary_use_case(
     await db.refresh(user)
 
     return user
+
+
+@router.post("/emergency-contacts", response_model=EmergencyContactResponseSchema)
+async def add_emergency_contact(contact: CreateEmergencyContactSchema):
+    return EmergencyContactResponseSchema(
+        id="cnt_001",
+        full_name=contact.full_name,
+        relationship=contact.relationship,
+        phone_number=contact.phone_number,
+        is_verified=True
+    )
+
 
 
 @router.post("/update-setup-step", response_model=MobileUserResponseSchema)
@@ -387,7 +401,7 @@ async def update_account_setup_step(
 
     if not user:
         raise HTTPException(
-            status_code=Status.HTTP_404_NOT_FOUND,
+            status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found."
         )
 
@@ -415,7 +429,7 @@ async def update_app_permissions(
 
     if not user:
         raise HTTPException(
-            status_code=Status.HTTP_404_NOT_FOUND,
+            status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found."
         )
 
@@ -447,7 +461,7 @@ async def complete_onboarding(
 
     if not user:
         raise HTTPException(
-            status_code=Status.HTTP_404_NOT_FOUND,
+            status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found."
         )
 

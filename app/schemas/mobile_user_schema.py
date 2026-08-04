@@ -1,8 +1,8 @@
 from datetime import datetime
 from enum import Enum
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Optional, List
-
+import re
 
 # ==========================================
 # Enums
@@ -19,11 +19,24 @@ class UseCaseEnum(str, Enum):
 # Authentication Schemas
 # ==========================================
 
-# Schema matching user_model.dart JSON output
+# Schema matching user_model.dart JSON output with dual identifier field validation
 class MobileUserLoginSchema(BaseModel):
+    identifier: Optional[str] = Field(None, json_schema_extra={"example": "user@example.com or +2348000000000"})
     email: Optional[EmailStr] = Field(None, json_schema_extra={"example": "user@example.com"})
     phone_number: Optional[str] = Field(None, json_schema_extra={"example": "+2348000000000"})
     password: str = Field(..., json_schema_extra={"example": "yourpassword"})
+
+    @field_validator("identifier")
+    @classmethod
+    def validate_login_identifier(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        clean_value = value.strip()
+        is_email = re.match(r"^[\w\.-]+@[\w\.-]+\.\w+$", clean_value)
+        is_phone = re.match(r"^\+?[1-9]\d{1,14}$", clean_value)
+        if not is_email and not is_phone:
+            raise ValueError("Identifier must be a valid email address or international format phone number.")
+        return clean_value
 
 
 # Schema matching the Create Account screen form inputs
@@ -35,30 +48,51 @@ class MobileUserRegisterSchema(BaseModel):
 
 
 # ==========================================
-# Phone OTP Schemas
+# Universal / Split OTP Verification Schemas
 # ==========================================
 
-# Request payload to send Phone OTP
+# Unified payload for single input dispatch components
+class SendUniversalOTPRequestSchema(BaseModel):
+    identifier: str = Field(..., json_schema_extra={"example": "user@example.com or +2348000000000"})
+
+    @field_validator("identifier")
+    @classmethod
+    def validate_universal_identifier(cls, value: str) -> str:
+        clean_value = value.strip()
+        is_email = re.match(r"^[\w\.-]+@[\w\.-]+\.\w+$", clean_value)
+        is_phone = re.match(r"^\+?[1-9]\d{1,14}$", clean_value)
+        if not is_email and not is_phone:
+            raise ValueError("Universal destination target must be a valid email address or phone number string.")
+        return clean_value
+
+
+# Universal submission validator matching unified form layouts
+class VerifyUniversalOTPRequestSchema(BaseModel):
+    identifier: str = Field(..., json_schema_extra={"example": "user@example.com or +2348000000000"})
+    otp_code: str = Field(..., min_length=6, max_length=6, json_schema_extra={"example": "123456"})
+
+
+# ==========================================
+# Legacy Phone OTP Schemas (Kept for Flutter Layout Safety)
+# ==========================================
+
 class SendPhoneOTPRequestSchema(BaseModel):
     phone_number: str = Field(..., json_schema_extra={"example": "+2348000000000"})
 
 
-# Request payload when submitting 6-digit code for Phone Verification
 class VerifyPhoneOTPRequestSchema(BaseModel):
     phone_number: str = Field(..., json_schema_extra={"example": "+2348000000000"})
     otp_code: str = Field(..., min_length=6, max_length=6, json_schema_extra={"example": "123456"})
 
 
 # ==========================================
-# Email OTP Schemas
+# Legacy Email OTP Schemas (Kept for Flutter Layout Safety)
 # ==========================================
 
-# Request payload to send Email OTP
 class SendEmailOTPRequestSchema(BaseModel):
     email: EmailStr = Field(..., json_schema_extra={"example": "user@example.com"})
 
 
-# Request payload when submitting 6-digit code for Email Verification
 class VerifyEmailOTPRequestSchema(BaseModel):
     email: EmailStr = Field(..., json_schema_extra={"example": "user@example.com"})
     otp_code: str = Field(..., min_length=6, max_length=6, json_schema_extra={"example": "123456"})
@@ -88,13 +122,11 @@ class ValidateSOSPinResponseSchema(BaseModel):
 # Account Setup & Onboarding Schemas
 # ==========================================
 
-# Payload for UseCaseSelectionPage step (Step Index 2)
 class SelectUseCaseRequestSchema(BaseModel):
     user_id: int = Field(..., json_schema_extra={"example": 1})
     primary_use_case: UseCaseEnum = Field(..., description="Selected protection use case")
 
 
-# Payload for EmergencyContactPage step (Step Index 3)
 class CreateEmergencyContactSchema(BaseModel):
     user_id: int = Field(..., json_schema_extra={"example": 1})
     full_name: str = Field(..., json_schema_extra={"example": "Adaeze Obi"})
@@ -119,7 +151,6 @@ class EmergencyContactListResponseSchema(BaseModel):
     total: int
 
 
-# Payload for App Permissions Page (Step Index 4)
 class UpdateAppPermissionsSchema(BaseModel):
     user_id: int = Field(..., json_schema_extra={"example": 1})
     location_permission_granted: bool = Field(False, json_schema_extra={"example": True})
@@ -128,12 +159,10 @@ class UpdateAppPermissionsSchema(BaseModel):
     fcm_device_token: Optional[str] = Field(None, json_schema_extra={"example": "fcm_token_xyz_123"})
 
 
-# Payload to complete onboarding entirely
 class CompleteOnboardingSchema(BaseModel):
     user_id: int = Field(..., json_schema_extra={"example": 1})
 
 
-# Generic step update schema for AccountSetupScreen wizard
 class UpdateAccountSetupStepSchema(BaseModel):
     user_id: int = Field(..., json_schema_extra={"example": 1})
     step: int = Field(..., ge=0, le=4, json_schema_extra={"example": 4})
@@ -143,13 +172,11 @@ class UpdateAccountSetupStepSchema(BaseModel):
 # Response Schemas
 # ==========================================
 
-# Generic Status Response for OTP operations
 class OTPStatusResponseSchema(BaseModel):
     message: str
     success: bool
 
 
-# Main Response schema sent back to Flutter
 class MobileUserResponseSchema(BaseModel):
     id: int
     full_name: Optional[str] = None

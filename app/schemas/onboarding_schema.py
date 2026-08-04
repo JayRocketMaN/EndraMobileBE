@@ -1,4 +1,4 @@
-from enum import Enum
+"""from enum import Enum
 from typing import Optional
 from pydantic import BaseModel, Field
 
@@ -77,4 +77,4 @@ class AddPropertyRequest(BaseModel):
 
 
 class PropertyResponse(AddPropertyRequest):
-    property_id: str
+    property_id: str"""

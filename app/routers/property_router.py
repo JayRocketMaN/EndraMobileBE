@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -14,7 +14,7 @@ from app.schemas.property_schema import (
 router = APIRouter(prefix="/api/v1/mobile/properties", tags=["User Properties"])
 
 
-@router.post("", response_model=PropertyResponseSchema, status_code=Status.HTTP_201_CREATED)
+@router.post("", response_model=PropertyResponseSchema, status_code=status.HTTP_201_CREATED)
 async def create_user_property(
     payload: CreatePropertySchema,
     db: AsyncSession = Depends(get_db)
@@ -30,7 +30,7 @@ async def create_user_property(
 
     if not user:
         raise HTTPException(
-            status_code=Status.HTTP_404_NOT_FOUND,
+            status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found."
         )
 
