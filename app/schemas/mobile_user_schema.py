@@ -9,10 +9,13 @@ import re
 # ==========================================
 
 class UseCaseEnum(str, Enum):
-    PERSONAL = "personal"
-    FAMILY = "family"
-    BUSINESS = "business"
-    PROPERTY = "property"
+    PERSONAL = "Myself"
+    FAMILY = "Family"
+    BUSINESS = "Business"
+    PROPERTY = "Property"
+    HOME = "Home"
+    VEHICLE = "Vehicle"
+    COMMUNITY = "Community"
 
 
 # ==========================================

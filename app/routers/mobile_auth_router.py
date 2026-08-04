@@ -6,7 +6,7 @@ from sqlalchemy.future import select
 from pwdlib import PasswordHash
 
 from app.core.database import get_db
-from app.models.mobile_user_model import MobileUser
+from app.models.mobile_user_model import MobileUser,EmergencyContact
 from app.schemas.mobile_user_schema import (
     MobileUserRegisterSchema,
     MobileUserLoginSchema,
@@ -31,6 +31,10 @@ router = APIRouter(prefix="/api/v1/mobile/auth", tags=["Mobile Auth"])
 
 # Initialize pwdlib with recommended password hashing settings
 password_hash = PasswordHash.recommended()
+
+# Development Toggle for OTP Verification
+USE_HARDCODED_OTP = True
+STATIC_TEST_OTP = "123456"
 
 
 # ==========================================
@@ -69,7 +73,7 @@ async def register_mobile_user(
         phone_number=payload.phone_number,
         email=payload.email,
         hashed_password=hashed_pwd,
-        account_setup_step=1,  # Set next step after registration (PinSetupPage)
+        account_setup_step=1,  # Set next step after registration
     )
 
     db.add(new_user)
@@ -128,17 +132,17 @@ async def send_phone_otp(
             detail="User with this phone number not found."
         )
 
-    # Generate 6-digit OTP code
-    otp = f"{random.randint(100000, 999999)}"
+    # Hardcode OTP during development or generate random 6-digit OTP code
+    otp = STATIC_TEST_OTP if USE_HARDCODED_OTP else f"{random.randint(100000, 999999)}"
     
     user.phone_otp_code = otp
-    user.phone_otp_expires_at = datetime.utcnow() + timedelta(minutes=5)
+    user.phone_otp_expires_at = datetime.utcnow() + timedelta(minutes=10)
     await db.commit()
 
-    # TODO: Trigger SMS Provider (e.g. Twilio, Termii, Africa's Talking)
+    print(f"\n[PHONE OTP] Active Code for {payload.phone_number}: {otp}\n")
 
     return OTPStatusResponseSchema(
-        message="Phone OTP sent successfully.",
+        message=f"Phone OTP sent successfully. (Dev OTP: {otp})",
         success=True
     )
 
@@ -158,17 +162,23 @@ async def verify_phone_otp(
             detail="User not found."
         )
 
-    if not user.phone_otp_code or user.phone_otp_code != payload.otp_code:
+    # Check if the entered OTP matches dev hardcoded OTP or stored database OTP
+    is_dev_otp = USE_HARDCODED_OTP and payload.otp_code == STATIC_TEST_OTP
+    is_db_otp = user.phone_otp_code and user.phone_otp_code == payload.otp_code
+
+    if not (is_dev_otp or is_db_otp):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid OTP code."
         )
 
-    if user.phone_otp_expires_at and datetime.utcnow() > user.phone_otp_expires_at:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="OTP code has expired. Please request a new one."
-        )
+    # Only check expiration if NOT using the dev test OTP
+    if not is_dev_otp:
+        if user.phone_otp_expires_at and datetime.utcnow() > user.phone_otp_expires_at:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="OTP code has expired. Please request a new one."
+            )
 
     # Update verification status and clear token
     user.is_phone_verified = True
@@ -201,17 +211,17 @@ async def send_email_otp(
             detail="User with this email not found."
         )
 
-    # Generate 6-digit OTP code
-    otp = f"{random.randint(100000, 999999)}"
+    # Hardcode OTP during development or generate random 6-digit OTP code
+    otp = STATIC_TEST_OTP if USE_HARDCODED_OTP else f"{random.randint(100000, 999999)}"
     
     user.email_otp_code = otp
     user.email_otp_expires_at = datetime.utcnow() + timedelta(minutes=10)
     await db.commit()
 
-    # TODO: Trigger Email Provider (e.g. FastMail, SendGrid, Amazon SES)
+    print(f"\n[EMAIL OTP] Active Code for {payload.email}: {otp}\n")
 
     return OTPStatusResponseSchema(
-        message="Email verification token sent successfully.",
+        message=f"Email verification token sent successfully. (Dev OTP: {otp})",
         success=True
     )
 
@@ -231,17 +241,23 @@ async def verify_email_otp(
             detail="User not found."
         )
 
-    if not user.email_otp_code or user.email_otp_code != payload.otp_code:
+    # Check if the entered OTP matches dev hardcoded OTP or stored database OTP
+    is_dev_otp = USE_HARDCODED_OTP and payload.otp_code == STATIC_TEST_OTP
+    is_db_otp = user.email_otp_code and user.email_otp_code == payload.otp_code
+
+    if not (is_dev_otp or is_db_otp):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid verification code."
         )
 
-    if user.email_otp_expires_at and datetime.utcnow() > user.email_otp_expires_at:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Verification code has expired. Please request a new one."
-        )
+    # Only check expiration if NOT using the dev test OTP
+    if not is_dev_otp:
+        if user.email_otp_expires_at and datetime.utcnow() > user.email_otp_expires_at:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Verification code has expired. Please request a new one."
+            )
 
     # Update verification status and clear token
     user.is_email_verified = True
@@ -289,7 +305,7 @@ async def setup_user_pins(
     user.hashed_duress_pin = password_hash.hash(payload.duress_pin)
     user.has_setup_pins = True
 
-    # Advance setup step to Step 2 (UseCaseSelectionPage)
+    # Advance setup step to Step 2
     if user.account_setup_step < 2:
         user.account_setup_step = 2
 
@@ -307,8 +323,8 @@ async def verify_sos_cancellation_pin(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Validates an entered PIN during SOS alert cancellation.
-    Returns whether the cancellation is normal or triggered under duress.
+    Validates an entered PIN during SOS alert verification.
+    Returns whether the normal PIN or duress PIN was entered.
     """
     query = select(MobileUser).where(MobileUser.id == payload.user_id)
     result = await db.execute(query)
@@ -323,14 +339,14 @@ async def verify_sos_cancellation_pin(
     # 1. Check Normal PIN
     if password_hash.verify(payload.pin_entered, user.hashed_normal_pin):
         return ValidateSOSPinResponseSchema(
-            status="normal_cancellation",
+            status="verified_normal_pin",
             is_duress=False
         )
 
     # 2. Check Duress PIN
     if password_hash.verify(payload.pin_entered, user.hashed_duress_pin):
         return ValidateSOSPinResponseSchema(
-            status="duress_cancellation",
+            status="verified_duress_pin",
             is_duress=True
         )
 
@@ -350,10 +366,6 @@ async def select_primary_use_case(
     payload: SelectUseCaseRequestSchema,
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Saves user's selected primary protection use case (Step Index 2)
-    and advances setup progress to Step Index 3 (EmergencyContactPage).
-    """
     query = select(MobileUser).where(MobileUser.id == payload.user_id)
     result = await db.execute(query)
     user = result.scalar_one_or_none()
@@ -375,26 +387,31 @@ async def select_primary_use_case(
 
 
 @router.post("/emergency-contacts", response_model=EmergencyContactResponseSchema)
-async def add_emergency_contact(contact: CreateEmergencyContactSchema):
-    return EmergencyContactResponseSchema(
-        id="cnt_001",
+async def add_emergency_contact(
+    contact: CreateEmergencyContactSchema,
+    db: AsyncSession = Depends(get_db)  # Inject database session
+):
+    # 1. Create database model instance
+    new_contact = EmergencyContact(
+        user_id=contact.user_id,  # Ensure your Create EmergencyContactSchema passes user_id
         full_name=contact.full_name,
         relationship=contact.relationship,
         phone_number=contact.phone_number,
-        is_verified=True
     )
 
+    # 2. Add and commit to generating auto-incrementing ID
+    db.add(new_contact)
+    await db.commit()
+    await db.refresh(new_contact)
 
+    # 3. Return saved contact with its real dynamic ID
+    return new_contact
 
 @router.post("/update-setup-step", response_model=MobileUserResponseSchema)
 async def update_account_setup_step(
     payload: UpdateAccountSetupStepSchema,
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Directly updates the current page index for the wizard flow.
-    If set to step 4 or beyond, marks onboarding as completed.
-    """
     query = select(MobileUser).where(MobileUser.id == payload.user_id)
     result = await db.execute(query)
     user = result.scalar_one_or_none()
@@ -420,9 +437,6 @@ async def update_app_permissions(
     payload: UpdateAppPermissionsSchema,
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Updates granted app permission flags and FCM device token for push notifications.
-    """
     query = select(MobileUser).where(MobileUser.id == payload.user_id)
     result = await db.execute(query)
     user = result.scalar_one_or_none()
@@ -451,10 +465,6 @@ async def complete_onboarding(
     payload: CompleteOnboardingSchema,
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Marks the onboarding process as fully completed (step 4), routing the
-    mobile application directly to the main dashboard.
-    """
     query = select(MobileUser).where(MobileUser.id == payload.user_id)
     result = await db.execute(query)
     user = result.scalar_one_or_none()

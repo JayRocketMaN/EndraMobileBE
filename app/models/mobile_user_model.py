@@ -7,10 +7,13 @@ from app.core.database import Base
 
 
 class UseCaseEnum(str, enum.Enum):
-    PERSONAL = "personal"
-    FAMILY = "family"
-    BUSINESS = "business"
-    PROPERTY = "property"
+    PERSONAL = "Myself"
+    FAMILY = "Family"
+    BUSINESS = "Business"
+    PROPERTY = "Property"
+    HOME = "Home"
+    VEHICLE = "Vehicle"
+    COMMUNITY = "Community"
 
 
 class MobileUser(Base):
@@ -38,7 +41,12 @@ class MobileUser(Base):
 
     # Onboarding & Profile Setup Fields
     primary_use_case: Mapped[Optional[UseCaseEnum]] = mapped_column(
-        SQLEnum(UseCaseEnum, native_enum=False), nullable=True
+        SQLEnum(
+            UseCaseEnum, 
+            native_enum=False, 
+            values_callable=lambda x: [e.value for e in x]
+        ), 
+        nullable=True
     )
     account_setup_step: Mapped[int] = mapped_column(Integer, default=0)
     is_onboarding_completed: Mapped[bool] = mapped_column(Boolean, default=False)
