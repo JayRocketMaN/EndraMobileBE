@@ -19,12 +19,20 @@ from app.routers import (
 )
 
 
-@asynccontextmanager
+"""@asynccontextmanager
 async def lifespan(app: FastAPI):
     # Automatically create missing database tables on application startup
     async with async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    yield
+    yield"""
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 🚨 TEMPORARILY COMMENT OUT THIS BLOCK TO PREVENT LIFESPAN BOOT CRASHES:
+    # async with async_engine.begin() as conn:
+    #     await conn.run_sync(Base.metadata.create_all)
+    
+    # Keep this yield intact so FastAPI can proceed to spin up your routers
+    yield 
 
 
 app = FastAPI(
