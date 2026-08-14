@@ -89,14 +89,16 @@ class DiscoveredDevice(Base):
     # Multi-tenant Scopes
     organization_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     
-    # FK target fixed to 'user_properties.id' with Integer type matching Property model
+    # Matches user_properties.id (Integer)
     property_id: Mapped[Optional[int]] = mapped_column(
         Integer, 
         ForeignKey("user_properties.id", ondelete="SET NULL"), 
         nullable=True
     )
-    discovered_by_user_id: Mapped[Optional[str]] = mapped_column(
-        String, 
+    
+    # FIXED: Changed from String to Integer to match mobile_users.id
+    discovered_by_user_id: Mapped[Optional[int]] = mapped_column(
+        Integer, 
         ForeignKey("mobile_users.id", ondelete="CASCADE"), 
         nullable=True
     )
@@ -155,9 +157,9 @@ class ManualCamera(Base):
     )
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
 
-    # Foreign Key Setup
-    owner_id: Mapped[Optional[str]] = mapped_column(
-        String, 
+    # FIXED: Changed owner_id from String to Integer to match mobile_users.id
+    owner_id: Mapped[Optional[int]] = mapped_column(
+        Integer, 
         ForeignKey("mobile_users.id", ondelete="CASCADE"), 
         nullable=True
     )
