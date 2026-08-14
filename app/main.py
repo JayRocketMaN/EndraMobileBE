@@ -2,6 +2,7 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 
 from app.core.database import async_engine, Base
 
@@ -60,6 +61,41 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+
+# ==========================================
+# CUSTOM OPENAPI METADATA (For WebSockets in Swagger UI)
+# ==========================================
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    
+    openapi_schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+    
+    # Manually append your WebSocket route to the OpenAPI spec
+    openapi_schema["paths"]["/ws"] = {
+        "get": {
+            "tags": ["WebSocket Real-time Feeds"],
+            "summary": "Real-time Incident & Alert Feed (WebSocket)",
+            "description": "Establish a WebSocket connection (`wss://`) for live AI threat detection and emergency dispatch feeds.",
+            "responses": {
+                "101": {
+                    "description": "Switching Protocols to WebSocket"
+                }
+            }
+        }
+    }
+    
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+app.openapi = custom_openapi
+
 
 # Enable CORS for Flutter mobile app, web clients, and Swagger UI
 app.add_middleware(
