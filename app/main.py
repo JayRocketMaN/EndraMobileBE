@@ -1,19 +1,25 @@
+import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.database import async_engine, Base
 
+# Configure logging for production/deployment tracking
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("endra_api")
+
 # ==========================================
-# MODEL IMPORTS (Required for Base.metadata)
+# 1. MODEL IMPORTS (Explicitly Register Metadata)
 # ==========================================
+# Importing these registers all tables with Base.metadata before startup sync
 from app.models.mobile_user_model import MobileUser, EmergencyContact
 from app.models.property_model import Property
 from app.models.hardware_model import DiscoveredDevice, ManualCamera
 
 
 # ==========================================
-# ROUTER IMPORTS
+# 2. ROUTER IMPORTS
 # ==========================================
 from app.routers import (
     hardware_router,
@@ -25,11 +31,26 @@ from app.routers import (
 )
 
 
+async def sync_database_schema():
+    """
+    Live database schema sync handler.
+    Ensures all registered SQLAlchemy 2.0 models exist in PostgreSQL,
+    automatically creating missing tables during application startup.
+    """
+    try:
+        logger.info("Initializing live database schema synchronization...")
+        async with async_engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("Database schema synchronized successfully: All tables created and verified.")
+    except Exception as e:
+        logger.error(f"Failed to synchronize database schema: {str(e)}")
+        raise e
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Automatically create missing database tables on application startup on Render
-    async with async_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    # Automatically sync missing database tables on application startup
+    await sync_database_schema()
     yield
 
 
@@ -50,7 +71,7 @@ app.add_middleware(
 )
 
 # ==========================================
-# ROUTER REGISTRATION
+# 3. ROUTER REGISTRATION
 # ==========================================
 app.include_router(mobile_auth_router.router)
 app.include_router(property_router.router)

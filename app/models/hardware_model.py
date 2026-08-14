@@ -1,10 +1,11 @@
-from enum import Enum
 import uuid
 from datetime import datetime, timezone
+from enum import Enum
 from typing import Optional
 
-from sqlalchemy import String, Integer, DateTime, ForeignKey, Enum as SQLEnum
+from sqlalchemy import DateTime, Enum as SQLEnum, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
+
 from app.core.database import Base
 
 
@@ -87,9 +88,11 @@ class DiscoveredDevice(Base):
 
     # Multi-tenant Scopes
     organization_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    property_id: Mapped[Optional[str]] = mapped_column(
-        String, 
-        ForeignKey("properties.id", ondelete="CASCADE"), 
+    
+    # FK target fixed to 'user_properties.id' with Integer type matching Property model
+    property_id: Mapped[Optional[int]] = mapped_column(
+        Integer, 
+        ForeignKey("user_properties.id", ondelete="SET NULL"), 
         nullable=True
     )
     discovered_by_user_id: Mapped[Optional[str]] = mapped_column(
