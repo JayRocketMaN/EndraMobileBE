@@ -4,7 +4,7 @@ from sqlalchemy.future import select
 from uuid import UUID
 
 from app.core.database import get_db
-from app.models.camera_model import CameraNode, CameraStatus
+from app.models.gateway_sync_model import CameraNode, CameraStatus
 from app.core.security import decrypt_password # Assuming you have a matching decryption helper matching your hash setup
 
 router = APIRouter(prefix="/api/v1/hardware/gateways", tags=["Gateway Cloud-Edge Sync Infrastructure"])

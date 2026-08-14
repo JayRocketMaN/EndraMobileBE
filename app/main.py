@@ -4,23 +4,30 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.database import async_engine, Base
 
-# Import models so SQLAlchemy registers them before table creation
+# ==========================================
+# MODEL IMPORTS (Required for Base.metadata)
+# ==========================================
 from app.models.mobile_user_model import MobileUser, EmergencyContact
 from app.models.property_model import Property
-# Import all other model files here so Base knows about every single table
+from app.models.hardware_model import DiscoveredDevice, ManualCamera
 
+
+# ==========================================
+# ROUTER IMPORTS
+# ==========================================
 from app.routers import (
     hardware_router,
     dashboard_router,
     message_router,
     mobile_auth_router,
     property_router,
+    websocket_router,
 )
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Automatically create missing database tables on application startup
+    # Automatically create missing database tables on application startup on Render
     async with async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield
@@ -33,7 +40,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Enable CORS for Flutter app / web clients / Swagger UI
+# Enable CORS for Flutter mobile app, web clients, and Swagger UI
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -42,10 +49,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Register routers
+# ==========================================
+# ROUTER REGISTRATION
+# ==========================================
 app.include_router(mobile_auth_router.router)
 app.include_router(property_router.router)
 app.include_router(hardware_router.router)
+app.include_router(websocket_router.router)
 app.include_router(dashboard_router.router)
 app.include_router(message_router.router)
 
