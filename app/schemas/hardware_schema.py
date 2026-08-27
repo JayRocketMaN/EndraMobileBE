@@ -1,7 +1,6 @@
 from enum import Enum
 from typing import Optional, List
 from datetime import datetime
-from uuid import UUID
 from pydantic import BaseModel, Field, ConfigDict
 
 
@@ -60,40 +59,58 @@ class DeviceDiscoveryItem(BaseModel):
 
 
 class QRValidationRequest(BaseModel):
-    qr_code_payload: str = Field(..., json_schema_extra={"example": "ENDRA:SN99018273:00:1A:2B:3C:4D:5E"})
-    organization_id: Optional[UUID] = Field(None, json_schema_extra={"example": "123e4567-e89b-12d3-a456-426614174000"})
-    property_id: Optional[UUID] = Field(None, json_schema_extra={"example": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"})
+    qr_code_payload: str = Field(
+        ..., 
+        description="Raw scanned QR string (Plain MAC/SN, Key-Value string, or JSON payload)"
+    )
 
 
 class QRValidationResponse(BaseModel):
-    status: str = "validated"
-    activation_token: str = Field(..., json_schema_extra={"example": "sec_tok_AbCdEf123456"})
-    serial_number: str = Field(..., json_schema_extra={"example": "SN99018273"})
+    status: str = Field("validated", example="validated")
+    activation_token: str = Field(..., description="Staging token generated for pairing linkage")
+    identifier: str = Field(..., description="Extracted MAC address or Serial Number")
     device_type: DeviceType = DeviceType.CAMERA
-    model: str = "ENDRA-Cam-Pro-4K"
+    can_auto_pair: bool = Field(
+        False, 
+        description="True if QR contained complete network params (IP, credentials) allowing immediate zero-touch pairing."
+    )
+
+    ip_address: Optional[str] = Field(None, example="192.168.1.120")
+    port: Optional[int] = Field(None, example=554)
+    username: Optional[str] = Field(None, example="admin")
+    password: Optional[str] = Field(None, example="Password123")
+    channel: Optional[int] = Field(None, example=1)
+    custom_stream_path: Optional[str] = Field(None, example="/h264/ch1/main")
+    protocol: Optional[ConnectionProtocol] = Field(None, example=ConnectionProtocol.RTSP)
 
 
 class DevicePairingRequest(BaseModel):
-    device_id: str
-    serial_number: str = Field(..., json_schema_extra={"example": "SN99018273"})
-    zone_name: str = Field(..., json_schema_extra={"example": "Front Porch"})
-    activation_token: str = Field(..., json_schema_extra={"example": "sec_tok_AbCdEf123456"})
-    
-    ip_address: Optional[str] = Field(None, json_schema_extra={"example": "192.168.1.50"})
-    port: int = Field(554, json_schema_extra={"example": 554})
-    
-    stream_username: Optional[str] = Field("admin", json_schema_extra={"example": "admin"})
-    stream_password: Optional[str] = Field(None, json_schema_extra={"example": "CameraPassword123"})
-    
-    wifi_ssid: Optional[str] = Field(None, json_schema_extra={"example": "HomeNetwork_5G"})
-    wifi_password: Optional[str] = Field(None, json_schema_extra={"example": "SecretPass123"})
+    activation_token: Optional[str] = Field(None, description="Staging token from /validate-qr")
+    device_name: Optional[str] = Field("Main Entrance Camera", example="Front Gate Camera")
+
+    ip_address: str = Field(..., example="192.168.1.120")
+    port: int = Field(554, example=554)
+    username: str = Field(..., example="admin")
+    password: str = Field(..., example="Password123")
+
+    channel: Optional[int] = 1
+    custom_stream_path: Optional[str] = Field(None, example="/Streaming/Channels/101")
+    zone_name: Optional[str] = Field("Default Zone", example="Warehouse Exterior")
+    protocol: Optional[ConnectionProtocol] = ConnectionProtocol.RTSP
+    mac_address: Optional[str] = Field(None, example="00:1A:2B:3C:4D:5E")
+    serial_number: Optional[str] = Field(None, example="DS-2026-99018")
+
+
+class QrDevicePairingRequest(DevicePairingRequest):
+    activation_token: str
 
 
 class DevicePairingResponse(BaseModel):
-    status: str = "paired"
-    device_id: str
-    assigned_zone: str
-    firmware_version: str = "v2.1.0-prod"
+    status: str = Field("paired", example="paired")
+    camera_id: str = Field(..., example="550e8400-e29b-41d4-a716-446655440000")
+    device_name: str = Field(..., example="Front Gate Camera")
+    assigned_zone: str = Field(..., example="Warehouse Exterior")
+    constructed_stream_url: str = Field(..., example="rtsp://admin:Password123@192.168.1.120:554/h264/ch1/main")
     is_online: bool = True
 
 
@@ -112,7 +129,7 @@ class DiscoveredDeviceResponse(BaseModel):
     last_known_port: int
     firmware_version: Optional[str] = None
     organization_id: Optional[str] = None
-    property_id: Optional[str] = None
+    property_id: Optional[int] = None
     last_seen_at: datetime
     created_at: datetime
 
@@ -120,8 +137,32 @@ class DiscoveredDeviceResponse(BaseModel):
 
 
 # ==========================================
-# 3. MANUAL SETUP SCHEMAS (ONVIF / RTSP / DVR)
+# 3. CAMERA SCHEMAS (UNIFIED ACTIVE & MANUAL)
 # ==========================================
+
+class CameraResponse(BaseModel):
+    id: str
+    camera_name: str
+    mac_address: Optional[str] = None
+    serial_number: Optional[str] = None
+    assigned_zone: str
+    protocol: ConnectionProtocol
+    ip_address: str
+    port: int
+    channel: Optional[int] = 1
+    custom_stream_path: Optional[str] = None
+    username: str
+    stream_url: str
+    status: CameraStatus
+    is_active: bool
+    is_ptz: bool
+    owner_id: Optional[int] = None
+    property_id: Optional[int] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
 
 class ManualCameraSetupRequest(BaseModel):
     protocol: ConnectionProtocol = ConnectionProtocol.ONVIF
@@ -145,9 +186,29 @@ class ManualCameraResponse(BaseModel):
     stream_url: Optional[str] = None
     status: CameraStatus
     is_active: bool
-    owner_id: Optional[str] = None
+    owner_id: Optional[int] = None
     created_at: datetime
     updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CameraMetadataUpdateRequest(BaseModel):
+    camera_name: Optional[str] = None
+    assigned_zone: Optional[str] = None
+    is_ptz: Optional[bool] = None
+    retention_days: Optional[int] = None
+
+
+class CameraUpdateRequest(BaseModel):
+    camera_name: Optional[str] = Field(None, example="Front Entrance Camera")
+    ip_address: Optional[str] = Field(None, example="192.168.1.120")
+    port: Optional[int] = Field(None, example=554)
+    channel: Optional[int] = Field(None, example=1)
+    username: Optional[str] = Field(None, example="admin")
+    password: Optional[str] = Field(None, example="Secret123!")
+    custom_stream_path: Optional[str] = Field(None, example="live/ch0")
+    assigned_zone: Optional[str] = Field(None, example="Warehouse A")
 
     model_config = ConfigDict(from_attributes=True)
 

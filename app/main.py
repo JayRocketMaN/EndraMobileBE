@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 
-from app.core.database import async_engine, Base
+from app.core.database import Base, async_engine
 
 # Configure logging for production/deployment tracking
 logging.basicConfig(level=logging.INFO)
@@ -13,18 +13,17 @@ logger = logging.getLogger("endra_api")
 # ==========================================
 # 1. MODEL IMPORTS (Explicitly Register Metadata)
 # ==========================================
-# Importing these registers all tables with Base.metadata before startup sync
-from app.models.mobile_user_model import MobileUser, EmergencyContact
+# Importing these registers ALL tables with Base.metadata before startup sync
+from app.models.hardware_model import Camera, DiscoveredDevice, ManualCamera
+from app.models.mobile_user_model import EmergencyContact, MobileUser
 from app.models.property_model import Property
-from app.models.hardware_model import DiscoveredDevice, ManualCamera
-
 
 # ==========================================
 # 2. ROUTER IMPORTS
 # ==========================================
 from app.routers import (
-    hardware_router,
     dashboard_router,
+    hardware_router,
     message_router,
     mobile_auth_router,
     property_router,
@@ -69,14 +68,14 @@ app = FastAPI(
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
-    
+
     openapi_schema = get_openapi(
         title=app.title,
         version=app.version,
         description=app.description,
         routes=app.routes,
     )
-    
+
     # Manually append your WebSocket route to the OpenAPI spec
     openapi_schema["paths"]["/ws"] = {
         "get": {
@@ -90,9 +89,10 @@ def custom_openapi():
             }
         }
     }
-    
+
     app.openapi_schema = openapi_schema
     return app.openapi_schema
+
 
 app.openapi = custom_openapi
 
@@ -111,7 +111,11 @@ app.add_middleware(
 # ==========================================
 app.include_router(mobile_auth_router.router)
 app.include_router(property_router.router)
-app.include_router(hardware_router.router)
+app.include_router(
+    hardware_router.router, 
+    prefix="/api/v1/hardware", 
+    tags=["Hardware & Camera Registration"]
+)
 app.include_router(websocket_router.router)
 app.include_router(dashboard_router.router)
 app.include_router(message_router.router)
