@@ -84,15 +84,18 @@ class QRValidationResponse(BaseModel):
     protocol: Optional[ConnectionProtocol] = Field(None, example=ConnectionProtocol.RTSP)
 
 
-class DevicePairingRequest(BaseModel):
-    activation_token: Optional[str] = Field(None, description="Staging token from /validate-qr")
-    device_name: Optional[str] = Field("Main Entrance Camera", example="Front Gate Camera")
+# ----------------------------------------------------------------------
+# NEW EXPLICIT STRATEGY: Base schema containing pure device configuration
+# ----------------------------------------------------------------------
+class BaseDevicePairingRequest(BaseModel):
+    maker: Optional[str] = Field(None, description="Camera vendor/manufacturer brand", example="Hikvision")
+    model: Optional[str] = Field(None, description="Camera specific hardware model name", example="DS-2CD2087G2")
 
+    device_name: Optional[str] = Field("Main Entrance Camera", example="Front Gate Camera")
     ip_address: str = Field(..., example="192.168.1.120")
     port: int = Field(554, example=554)
     username: str = Field(..., example="admin")
     password: str = Field(..., example="Password123")
-
     channel: Optional[int] = 1
     custom_stream_path: Optional[str] = Field(None, example="/Streaming/Channels/101")
     zone_name: Optional[str] = Field("Default Zone", example="Warehouse Exterior")
@@ -101,8 +104,19 @@ class DevicePairingRequest(BaseModel):
     serial_number: Optional[str] = Field(None, example="DS-2026-99018")
 
 
-class QrDevicePairingRequest(DevicePairingRequest):
-    activation_token: str
+# VARIANT A: For the /pair-qr endpoint (Enforces mandatory activation_token)
+class QrDevicePairingRequest(BaseDevicePairingRequest):
+    activation_token: str = Field(..., description="Staging token from /validate-qr")
+
+
+# VARIANT B: For the /pair-discovered endpoint (Explicitly removes activation_token)
+class DiscoveredDevicePairingRequest(BaseDevicePairingRequest):
+    pass 
+
+
+# Deprecated fallback model kept safe for database backward legacy references
+class DevicePairingRequest(BaseDevicePairingRequest):
+    activation_token: Optional[str] = Field(None, description="Staging token from /validate-qr")
 
 
 class DevicePairingResponse(BaseModel):
@@ -142,7 +156,7 @@ class DiscoveredDeviceResponse(BaseModel):
 
 class CameraResponse(BaseModel):
     id: str
-    camera_name: str
+    device_name: str
     mac_address: Optional[str] = None
     serial_number: Optional[str] = None
     assigned_zone: str
@@ -172,12 +186,12 @@ class ManualCameraSetupRequest(BaseModel):
     username: str = Field(..., json_schema_extra={"example": "admin"})
     password: str = Field(..., json_schema_extra={"example": "password123"})
     stream_url: Optional[str] = Field(None, json_schema_extra={"example": "rtsp://192.168.1.40/live"})
-    camera_name: str = Field(..., json_schema_extra={"example": "Store Entrance"})
+    device_name: str = Field(..., json_schema_extra={"example": "Store Entrance"})
 
 
 class ManualCameraResponse(BaseModel):
     id: str
-    camera_name: str
+    device_name: str
     protocol: ConnectionProtocol
     ip_address: str
     port: int
@@ -194,14 +208,14 @@ class ManualCameraResponse(BaseModel):
 
 
 class CameraMetadataUpdateRequest(BaseModel):
-    camera_name: Optional[str] = None
+    device_name: Optional[str] = None
     assigned_zone: Optional[str] = None
     is_ptz: Optional[bool] = None
     retention_days: Optional[int] = None
 
 
 class CameraUpdateRequest(BaseModel):
-    camera_name: Optional[str] = Field(None, example="Front Entrance Camera")
+    device_name: Optional[str] = Field(None, example="Front Entrance Camera")
     ip_address: Optional[str] = Field(None, example="192.168.1.120")
     port: Optional[int] = Field(None, example=554)
     channel: Optional[int] = Field(None, example=1)
