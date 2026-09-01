@@ -47,6 +47,17 @@ class StagingStatus(str, Enum):
     EXPIRED = "expired"        # Staging session timed out
 
 
+class OnboardingMethod(str, Enum):
+    MANUAL = "manual"
+    QR_CODE = "qr_code"
+    AUTO_DISCOVERY = "auto_discovery"
+
+
+# Helper function to serialize Enum values safely to PostgreSQL native ENUMs
+def enum_values(enum_cls):
+    return lambda obj: [e.value for e in obj]
+
+
 # ==========================================
 # 2. DISCOVERED & STAGED DEVICES MODEL
 # ==========================================
@@ -71,13 +82,21 @@ class DiscoveredDevice(Base):
     model: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
     # Device Categories
-    device_type: Mapped[DeviceType] = mapped_column(SQLEnum(DeviceType), default=DeviceType.CAMERA, nullable=False)
-    connectivity: Mapped[ConnectivityType] = mapped_column(SQLEnum(ConnectivityType), default=ConnectivityType.WIFI, nullable=False)
+    device_type: Mapped[DeviceType] = mapped_column(
+        SQLEnum(DeviceType, values_callable=enum_values(DeviceType)), 
+        default=DeviceType.CAMERA, 
+        nullable=False
+    )
+    connectivity: Mapped[ConnectivityType] = mapped_column(
+        SQLEnum(ConnectivityType, values_callable=enum_values(ConnectivityType)), 
+        default=ConnectivityType.WIFI, 
+        nullable=False
+    )
     signal_strength_dbm: Mapped[Optional[int]] = mapped_column(Integer, default=-65, nullable=True)
 
     # Onboarding Staging & Verification
     staging_status: Mapped[StagingStatus] = mapped_column(
-        SQLEnum(StagingStatus), 
+        SQLEnum(StagingStatus, values_callable=enum_values(StagingStatus)), 
         default=StagingStatus.DISCOVERED, 
         nullable=False
     )
@@ -138,28 +157,35 @@ class Camera(Base):
     mac_address: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
     serial_number: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
     assigned_zone: Mapped[str] = mapped_column(String, default="Default Zone", nullable=False)
+    
     protocol: Mapped[ConnectionProtocol] = mapped_column(
-        SQLEnum(ConnectionProtocol), 
+        SQLEnum(ConnectionProtocol, values_callable=enum_values(ConnectionProtocol)), 
         default=ConnectionProtocol.RTSP, 
         nullable=False
     )
+    
+    onboarding_method: Mapped[OnboardingMethod] = mapped_column(
+        SQLEnum(OnboardingMethod, values_callable=enum_values(OnboardingMethod)),
+        default=OnboardingMethod.MANUAL,
+        nullable=False
+    )
 
-    # Network Details
-    ip_address: Mapped[str] = mapped_column(String, nullable=False)
+    # Network Details (Made Optional for pure custom RTSP stream URLs)
+    ip_address: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     port: Mapped[int] = mapped_column(Integer, default=554, nullable=False)
     channel: Mapped[Optional[int]] = mapped_column(Integer, default=1, nullable=True)
     custom_stream_path: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
-    # Credentials
-    username: Mapped[str] = mapped_column(String, nullable=False)
-    password: Mapped[str] = mapped_column(String, nullable=False)
+    # Credentials (Made Optional for unauthenticated RTSP feeds)
+    username: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    password: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
     # Live Feed URI & Pipeline Config
     stream_url: Mapped[str] = mapped_column(String, nullable=False)
 
     # System Status & Metadata
     status: Mapped[CameraStatus] = mapped_column(
-        SQLEnum(CameraStatus), 
+        SQLEnum(CameraStatus, values_callable=enum_values(CameraStatus)), 
         default=CameraStatus.CONNECTED, 
         nullable=False
     )
@@ -187,38 +213,4 @@ class Camera(Base):
         DateTime(timezone=True), 
         default=lambda: datetime.now(timezone.utc), 
         onupdate=lambda: datetime.now(timezone.utc)
-    )
-
-
-# ==========================================
-# 4. MANUAL CAMERA MODEL
-# ==========================================
-
-class ManualCamera(Base):
-    """Stores manually configured cameras added directly via RTSP or custom streams."""
-    __tablename__ = "manual_cameras"
-
-    # Primary Key
-    id: Mapped[str] = mapped_column(
-        String, 
-        primary_key=True, 
-        default=lambda: str(uuid.uuid4())
-    )
-
-    name: Mapped[str] = mapped_column(String, nullable=False)
-    rtsp_url: Mapped[str] = mapped_column(String, nullable=False)
-    location: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-
-    # Foreign Key Ownership
-    owner_id: Mapped[Optional[int]] = mapped_column(
-        Integer, 
-        ForeignKey("mobile_users.id", ondelete="CASCADE"), 
-        nullable=True
-    )
-
-    # Timestamps
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), 
-        default=lambda: datetime.now(timezone.utc)
     )

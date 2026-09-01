@@ -13,7 +13,7 @@ from sqlalchemy.future import select
 
 from app.core.database import get_db
 from app.services.video_pipeline import pipeline_manager
-from app.models.hardware_model import Camera, DiscoveredDevice, ManualCamera, CameraStatus, StagingStatus
+from app.models.hardware_model import Camera, DiscoveredDevice, CameraStatus, StagingStatus
 import app.schemas.hardware_schema as schemas
 
 # Initialize a SINGLE router instance for all hardware endpoints
@@ -138,45 +138,49 @@ def parse_third_party_qr(qr_payload: str) -> Dict[str, Any]:
 
 async def _persist_paired_device(
     db: AsyncSession, 
-    request: schemas.DevicePairingRequest
-) -> DiscoveredDevice:
-    """Helper function to create or update DiscoveredDevice records."""
+    request: Any,
+    rtsp_url: str
+) -> Camera:
+    # 1. Update or create the Staged DiscoveredDevice record
     query = await db.execute(
-        select(DiscoveredDevice).where(DiscoveredDevice.last_known_ip == request.ip)
+        select(DiscoveredDevice).where(DiscoveredDevice.last_known_ip == request.ip_address)
     )
-    device = query.scalar_one_or_none()
-
-    if device:
-        device.maker = request.maker
-        device.model = request.model
-        device.last_known_port = request.port
-        device.protocol = request.protocol
-        device.username = request.username
-        device.password = request.password
-        device.device_name = request.device_name
-        device.assigned_zone = request.zone_name
-        device.staging_status = StagingStatus.PAIRED
+    staged = query.scalar_one_or_none()
+    if staged:
+        staged.staging_status = StagingStatus.PAIRED
+    
+    # 2. Check if the camera already exists in the Camera table
+    cam_query = await db.execute(
+        select(Camera).where(Camera.ip_address == request.ip_address)
+    )
+    camera = cam_query.scalar_one_or_none()
+    
+    if camera:
+        camera.device_name = request.device_name
+        camera.port = request.port
+        camera.username = request.username
+        camera.password = request.password
+        camera.stream_url = rtsp_url
+        camera.status = CameraStatus.CONNECTED
+        camera.assigned_zone = request.zone_name or camera.assigned_zone
     else:
-        device = DiscoveredDevice(
-            device_id=f"cam_{secrets.token_hex(4)}",
-            maker=request.maker,
-            model=request.model,
-            last_known_ip=request.ip,
-            last_known_port=request.port,
-            protocol=request.protocol,
+        camera = Camera(
+            device_name=request.device_name,
+            ip_address=request.ip_address,
+            port=request.port or 554,
+            channel=getattr(request, "channel", 1) or 1,
             username=request.username,
             password=request.password,
-            device_name=request.device_name,
-            assigned_zone=request.zone_name,
-            staging_status=StagingStatus.PAIRED
+            custom_stream_path=getattr(request, "custom_stream_path", None),
+            assigned_zone=getattr(request, "zone_name", "Default Zone"),
+            stream_url=rtsp_url,
+            status=CameraStatus.CONNECTED
         )
-        db.add(device)
+        db.add(camera)
 
     await db.commit()
-    await db.refresh(device)
-    return device
-
-
+    await db.refresh(camera)
+    return camera
 # ==========================================
 # 3. DEVELOPMENT BYPASS UTILITIES
 # ==========================================
@@ -490,7 +494,6 @@ async def pair_auto_discovered_camera(
         constructed_stream_url=rtsp_url,
         is_online=is_stream_online
     )
-
 # ==========================================
 # 3. MANUAL CAMERA SETUP
 # ==========================================
@@ -513,13 +516,16 @@ async def manual_camera_setup(
         custom_path=getattr(payload, "custom_stream_path", None)
     )
 
-    is_valid = await run_in_threadpool(verify_rtsp_credentials, constructed_url, 3000)
-
-    if not is_valid:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Failed to connect to camera. Please verify the IP address, port, username, password, or custom stream path."
-        )
+    # PIPELINE INTERCEPTION CHECK
+    if BYPASS_PIPELINE_EXECUTION:
+        print(f"🧪 [BYPASS MODE] Skipping RTSP connection test for manual camera '{payload.device_name}'.")
+    else:
+        is_valid = await run_in_threadpool(verify_rtsp_credentials, constructed_url, 3000)
+        if not is_valid:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Failed to connect to camera. Please verify the IP address, port, username, password, or custom stream path."
+            )
 
     query = await db.execute(
         select(Camera).where(Camera.ip_address == payload.ip_address)
@@ -527,17 +533,19 @@ async def manual_camera_setup(
     existing_camera = query.scalar_one_or_none()
 
     if existing_camera:
-        existing_camera.device_name = payload.device_name
+        existing_camera.camera_name = payload.device_name  # Corrected field mapping
         existing_camera.port = payload.port or 554
         existing_camera.channel = payload.channel or 1
         existing_camera.username = payload.username
         existing_camera.password = payload.password
+        existing_camera.custom_stream_path = getattr(payload, "custom_stream_path", None)
+        existing_camera.assigned_zone = getattr(payload, "assigned_zone", "Default Zone")
         existing_camera.stream_url = constructed_url
         existing_camera.status = CameraStatus.CONNECTED
         camera = existing_camera
     else:
         camera = Camera(
-            device_name=payload.device_name,
+            camera_name=payload.device_name,  # Corrected field mapping
             ip_address=payload.ip_address,
             port=payload.port or 554,
             channel=payload.channel or 1,
@@ -553,7 +561,11 @@ async def manual_camera_setup(
     await db.commit()
     await db.refresh(camera)
 
-    pipeline_manager.start(stream_source=camera.stream_url, camera_id=camera.id)
+    # START PIPELINE OR BYPASS
+    if BYPASS_PIPELINE_EXECUTION:
+        print(f"🧪 [BYPASS MODE] Saved manual camera '{camera.camera_name}' to DB. Skipping live pipeline start.")
+    else:
+        pipeline_manager.start(stream_source=camera.stream_url, camera_id=camera.id)
 
     return schemas.ConnectionValidationResponse(
         success=True,
@@ -561,8 +573,6 @@ async def manual_camera_setup(
         constructed_stream_url=constructed_url,
         camera=schemas.CameraResponse.model_validate(camera)
     )
-
-
 # ==========================================
 # 4. UNIFIED CAMERA CRUD & AGGREGATION
 # ==========================================
@@ -583,7 +593,6 @@ async def get_camera(camera_id: str, db: AsyncSession = Depends(get_db)):
             detail=f"Camera with ID '{camera_id}' not found."
         )
     return camera
-
 
 @router.put("/cameras/{camera_id}", response_model=schemas.CameraResponse)
 async def update_camera(
@@ -617,7 +626,12 @@ async def update_camera(
     await db.commit()
     await db.refresh(camera)
 
-    pipeline_manager.start(stream_source=camera.stream_url, camera_id=camera.id)
+    # If pipeline_manager is a dict, manage active pipeline entries directly
+    if isinstance(pipeline_manager, dict):
+        # Stop existing pipeline process if present in dictionary
+        existing_pipeline = pipeline_manager.pop(camera.id, None)
+        if existing_pipeline and hasattr(existing_pipeline, "stop"):
+            existing_pipeline.stop()
 
     return camera
 
@@ -633,7 +647,11 @@ async def delete_camera(camera_id: str, db: AsyncSession = Depends(get_db)):
             detail=f"Camera with ID '{camera_id}' not found."
         )
 
-    pipeline_manager.stop(camera_id=camera.id)
+    # If pipeline_manager is a dict, manage active pipeline entries directly
+    if isinstance(pipeline_manager, dict):
+        existing_pipeline = pipeline_manager.pop(camera.id, None)
+        if existing_pipeline and hasattr(existing_pipeline, "stop"):
+            existing_pipeline.stop()
 
     await db.delete(camera)
     await db.commit()

@@ -14,7 +14,7 @@ logger = logging.getLogger("endra_api")
 # 1. MODEL IMPORTS (Explicitly Register Metadata)
 # ==========================================
 # Importing these registers ALL tables with Base.metadata before startup sync
-from app.models.hardware_model import Camera, DiscoveredDevice, ManualCamera
+from app.models.hardware_model import Camera, DiscoveredDevice
 from app.models.mobile_user_model import EmergencyContact, MobileUser
 from app.models.property_model import Property
 

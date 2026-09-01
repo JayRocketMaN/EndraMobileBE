@@ -42,6 +42,12 @@ class StagingStatus(str, Enum):
     EXPIRED = "expired"
 
 
+class OnboardingMethod(str, Enum):
+    MANUAL = "manual"
+    QR_CODE = "qr_code"
+    AUTO_DISCOVERY = "auto_discovery"
+
+
 # ==========================================
 # 2. DISCOVERY & STAGING SCHEMAS
 # ==========================================
@@ -84,9 +90,6 @@ class QRValidationResponse(BaseModel):
     protocol: Optional[ConnectionProtocol] = Field(None, example=ConnectionProtocol.RTSP)
 
 
-# ----------------------------------------------------------------------
-# NEW EXPLICIT STRATEGY: Base schema containing pure device configuration
-# ----------------------------------------------------------------------
 class BaseDevicePairingRequest(BaseModel):
     maker: Optional[str] = Field(None, description="Camera vendor/manufacturer brand", example="Hikvision")
     model: Optional[str] = Field(None, description="Camera specific hardware model name", example="DS-2CD2087G2")
@@ -104,17 +107,14 @@ class BaseDevicePairingRequest(BaseModel):
     serial_number: Optional[str] = Field(None, example="DS-2026-99018")
 
 
-# VARIANT A: For the /pair-qr endpoint (Enforces mandatory activation_token)
 class QrDevicePairingRequest(BaseDevicePairingRequest):
     activation_token: str = Field(..., description="Staging token from /validate-qr")
 
 
-# VARIANT B: For the /pair-discovered endpoint (Explicitly removes activation_token)
 class DiscoveredDevicePairingRequest(BaseDevicePairingRequest):
     pass 
 
 
-# Deprecated fallback model kept safe for database backward legacy references
 class DevicePairingRequest(BaseDevicePairingRequest):
     activation_token: Optional[str] = Field(None, description="Staging token from /validate-qr")
 
@@ -151,21 +151,22 @@ class DiscoveredDeviceResponse(BaseModel):
 
 
 # ==========================================
-# 3. CAMERA SCHEMAS (UNIFIED ACTIVE & MANUAL)
+# 3. UNIFIED CAMERA SCHEMAS
 # ==========================================
 
 class CameraResponse(BaseModel):
     id: str
-    device_name: str
+    camera_name: str
     mac_address: Optional[str] = None
     serial_number: Optional[str] = None
     assigned_zone: str
     protocol: ConnectionProtocol
-    ip_address: str
-    port: int
+    onboarding_method: OnboardingMethod
+    ip_address: Optional[str] = None
+    port: int = 554
     channel: Optional[int] = 1
     custom_stream_path: Optional[str] = None
-    username: str
+    username: Optional[str] = None
     stream_url: str
     status: CameraStatus
     is_active: bool
@@ -179,32 +180,14 @@ class CameraResponse(BaseModel):
 
 
 class ManualCameraSetupRequest(BaseModel):
-    protocol: ConnectionProtocol = ConnectionProtocol.ONVIF
-    ip_address: str = Field(..., json_schema_extra={"example": "192.168.1.40"})
+    protocol: ConnectionProtocol = ConnectionProtocol.RTSP
+    ip_address: Optional[str] = Field(None, json_schema_extra={"example": "192.168.1.40"})
     port: int = Field(default=554, json_schema_extra={"example": 554})
     channel: Optional[int] = Field(default=1, json_schema_extra={"example": 1})
-    username: str = Field(..., json_schema_extra={"example": "admin"})
-    password: str = Field(..., json_schema_extra={"example": "password123"})
+    username: Optional[str] = Field(None, json_schema_extra={"example": "admin"})
+    password: Optional[str] = Field(None, json_schema_extra={"example": "password123"})
     stream_url: Optional[str] = Field(None, json_schema_extra={"example": "rtsp://192.168.1.40/live"})
     device_name: str = Field(..., json_schema_extra={"example": "Store Entrance"})
-
-
-class ManualCameraResponse(BaseModel):
-    id: str
-    device_name: str
-    protocol: ConnectionProtocol
-    ip_address: str
-    port: int
-    channel: Optional[int] = None
-    username: str
-    stream_url: Optional[str] = None
-    status: CameraStatus
-    is_active: bool
-    owner_id: Optional[int] = None
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = ConfigDict(from_attributes=True)
 
 
 class CameraMetadataUpdateRequest(BaseModel):
@@ -231,4 +214,4 @@ class ConnectionValidationResponse(BaseModel):
     success: bool
     message: str
     constructed_stream_url: str
-    camera: Optional[ManualCameraResponse] = None
+    camera: Optional[CameraResponse] = None
