@@ -13,7 +13,7 @@ from sqlalchemy.future import select
 
 from app.core.database import get_db
 from app.services.video_pipeline import pipeline_manager
-from app.models.hardware_model import Camera, DiscoveredDevice, CameraStatus, StagingStatus
+from app.models.hardware_model import Camera, DiscoveredDevice, CameraStatus, StagingStatus, OnboardingMethod, ConnectionProtocol
 import app.schemas.hardware_schema as schemas
 
 # Initialize a SINGLE router instance for all hardware endpoints
@@ -331,7 +331,7 @@ async def pair_camera_via_qr(
     # Corrected to perfectly match DevicePairingResponse schema properties
     return schemas.DevicePairingResponse(
         status="paired",
-        camera_id=device.device_id,
+        camera_id=device.id,
         device_name=device.device_name,
         assigned_zone=device.assigned_zone or "Default Zone",
         constructed_stream_url=rtsp_url,
@@ -344,34 +344,31 @@ async def pair_camera_via_qr(
 
 async def _persist_paired_device(
     db: AsyncSession, 
-    request: Any  # Polymorphic helper supporting all pairing variants cleanly
-) -> DiscoveredDevice:
-    """Helper function to create or update functional DiscoveredDevice entity objects."""
-    # FIXED: Changed request.ip to request.ip_address to match schema contracts perfectly
+    request: Any
+) -> Camera:
+    """Helper function to update staging state AND persist active Camera entities."""
+    
+    # 1. Update or create the DiscoveredDevice staging record
     query = await db.execute(
         select(DiscoveredDevice).where(DiscoveredDevice.last_known_ip == request.ip_address)
     )
-    device = query.scalar_one_or_none()
+    staged = query.scalar_one_or_none()
 
-    if device:
-        # FIX: Removed 'protocol' assignment because the column doesn't exist on DiscoveredDevice
-        device.last_known_port = request.port
-        device.cached_username = request.username
-        device.cached_password = request.password
-        device.device_name = request.device_name
-        device.assigned_zone = request.zone_name
-        device.staging_status = StagingStatus.PAIRED
-        device.mac_address = request.mac_address or device.mac_address
-        device.serial_number = request.serial_number or device.serial_number
+    if staged:
+        staged.last_known_port = request.port
+        staged.cached_username = request.username
+        staged.cached_password = request.password
+        staged.device_name = request.device_name
+        staged.staging_status = StagingStatus.PAIRED
+        staged.mac_address = request.mac_address or staged.mac_address
+        staged.serial_number = request.serial_number or staged.serial_number
         
-        # Safely bind UI brand parameters if provided
         if hasattr(request, "maker") and request.maker:
-            device.maker = request.maker
+            staged.maker = request.maker
         if hasattr(request, "model") and request.model:
-            device.model = request.model
+            staged.model = request.model
     else:
-        # FIX: Adjusted dictionary keys to align explicitly with DiscoveredDevice model columns
-        device = DiscoveredDevice(
+        staged = DiscoveredDevice(
             device_id=f"cam_{secrets.token_hex(4)}",
             last_known_ip=request.ip_address,
             last_known_port=request.port,
@@ -379,17 +376,56 @@ async def _persist_paired_device(
             cached_password=request.password,
             device_name=request.device_name,
             staging_status=StagingStatus.PAIRED,
-            mac_address=request.mac_address,
-            serial_number=request.serial_number,
+            mac_address=getattr(request, "mac_address", None),
+            serial_number=getattr(request, "serial_number", None),
             maker=getattr(request, "maker", None),
             model=getattr(request, "model", None)
         )
-        db.add(device)
+        db.add(staged)
 
+    # 2. Determine Onboarding Method cleanly
+    onboarding_method = OnboardingMethod.AUTO_DISCOVERY
+    if hasattr(request, "activation_token") and request.activation_token:
+        onboarding_method = OnboardingMethod.QR_CODE
+
+    # 3. Build full RTSP URL for active capture
+    rtsp_url = build_universal_rtsp_url(
+        ip=request.ip_address,
+        port=request.port,
+        username=request.username,
+        password=request.password,
+        channel=getattr(request, "channel", 1) or 1,
+        custom_path=getattr(request, "custom_stream_path", None)
+    )
+
+    # 4. Instantiate and persist the active Camera model entity
+    active_camera = Camera(
+        camera_name=request.device_name,
+        mac_address=getattr(request, "mac_address", None),
+        serial_number=getattr(request, "serial_number", None),
+        assigned_zone=getattr(request, "zone_name", None) or getattr(request, "assigned_zone", "Default Zone"),
+        protocol=ConnectionProtocol.RTSP,
+        onboarding_method=onboarding_method,
+        ip_address=request.ip_address,
+        port=request.port,
+        channel=getattr(request, "channel", 1) or 1,
+        custom_stream_path=getattr(request, "custom_stream_path", None),
+        username=request.username,
+        password=request.password,
+        stream_url=rtsp_url,
+        status=CameraStatus.CONNECTED,
+        is_active=True,
+        owner_id=getattr(request, "owner_id", None),
+        property_id=getattr(request, "property_id", None)
+    )
+    
+    db.add(active_camera)
+    
+    # Commit both transactions atomically
     await db.commit()
-    await db.refresh(device)
-    return device
-
+    await db.refresh(active_camera)
+    
+    return active_camera
 
 
 # ==========================================
@@ -406,7 +442,6 @@ async def pair_camera_via_qr(
     request: schemas.QrDevicePairingRequest,
     db: AsyncSession = Depends(get_db)
 ):
-    """Finalizes pairing by verifying an active token context session."""
     staged_device = await verify_activation_token(db, request.activation_token)
     if not staged_device:
         raise HTTPException(
@@ -423,29 +458,27 @@ async def pair_camera_via_qr(
         custom_path=request.custom_stream_path
     )
 
-    # 1. Persist directly to your PostgreSQL database safely
     device = await _persist_paired_device(db, request)
 
-    # 2. PIPELINE INTERCEPTION CHECK
     if BYPASS_PIPELINE_EXECUTION:
-        # Log the bypass and return a fake active state to satisfy the mobile client
-        print(f"🧪 [BYPASS MODE] Saved QR camera '{device.device_name}' to DB. Skipping live pipeline start.")
+        # FIX: Changed device.device_name to device.camera_name
+        print(f"🧪 [BYPASS MODE] Saved QR camera '{device.camera_name}' to DB. Skipping live pipeline start.")
         is_stream_online = True
     else:
-        # Production: Verify credentials via OpenCV and engage multi-threaded frame capture
         is_valid = await run_in_threadpool(verify_rtsp_credentials, rtsp_url, 3000)
         if not is_valid:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Token verified, but failed to connect to RTSP stream. Check IP, port, or credentials."
             )
-        pipeline_manager.start(stream_source=rtsp_url, camera_id=device.device_id)
+        # FIX: Changed device.device_id to device.id
+        pipeline_manager.start(stream_source=rtsp_url, camera_id=device.id)
         is_stream_online = True
 
     return schemas.DevicePairingResponse(
         status="paired",
-        camera_id=device.device_id,
-        device_name=device.device_name,
+        camera_id=device.id,  # FIX: Primary key on Camera model
+        device_name=device.camera_name,  # FIX: Camera model attribute
         assigned_zone=device.assigned_zone or "Default Zone",
         constructed_stream_url=rtsp_url,
         is_online=is_stream_online
@@ -457,7 +490,6 @@ async def pair_auto_discovered_camera(
     request: schemas.DiscoveredDevicePairingRequest,
     db: AsyncSession = Depends(get_db)
 ):
-    """Natively locks and pairs auto-discovered local area network endpoints."""
     rtsp_url = build_universal_rtsp_url(
         ip=request.ip_address,
         port=request.port,
@@ -467,29 +499,27 @@ async def pair_auto_discovered_camera(
         custom_path=request.custom_stream_path
     )
 
-    # 1. Persist directly to your PostgreSQL database safely
     device = await _persist_paired_device(db, request)
 
-    # 2. PIPELINE INTERCEPTION CHECK
     if BYPASS_PIPELINE_EXECUTION:
-        # Log the bypass and return a fake active state to satisfy the mobile client
-        print(f"🧪 [BYPASS MODE] Saved Discovered camera '{device.device_name}' to DB. Skipping live pipeline start.")
+        # FIX: Changed device.device_name to device.camera_name
+        print(f"🧪 [BYPASS MODE] Saved Discovered camera '{device.camera_name}' to DB. Skipping live pipeline start.")
         is_stream_online = True
     else:
-        # Production: Verify credentials via OpenCV and engage multi-threaded frame capture
         is_valid = await run_in_threadpool(verify_rtsp_credentials, rtsp_url, 3000)
         if not is_valid:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Failed to authenticate RTSP stream. Verify IP address, port, username, or password."
             )
-        pipeline_manager.start(stream_source=rtsp_url, camera_id=device.device_id)
+        # FIX: Changed device.device_id to device.id
+        pipeline_manager.start(stream_source=rtsp_url, camera_id=device.id)
         is_stream_online = True
 
     return schemas.DevicePairingResponse(
         status="paired",
-        camera_id=device.device_id,
-        device_name=device.device_name,
+        camera_id=device.id,  # FIX: Primary key on Camera model
+        device_name=device.camera_name,  # FIX: Camera model attribute
         assigned_zone=device.assigned_zone or "Default Zone",
         constructed_stream_url=rtsp_url,
         is_online=is_stream_online

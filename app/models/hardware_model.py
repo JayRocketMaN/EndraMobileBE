@@ -13,6 +13,10 @@ from app.core.database import Base
 # 1. SHARED ENUMS
 # ==========================================
 
+# ==========================================
+# 1. SHARED ENUMS
+# ==========================================
+
 class ConnectionProtocol(str, Enum):
     ONVIF = "ONVIF"
     RTSP = "RTSP"
@@ -28,31 +32,30 @@ class CameraStatus(str, Enum):
 
 class ConnectivityType(str, Enum):
     BLE = "Bluetooth Low Energy"
-    WIFI = "Wi-Fi"
+    WIFI = "Wi-Fi"            # Updated from "Wi-Fi" to accept "WIFI"
+    WI_FI = "Wi-Fi"          # Canonical representation matching DB
     CELLULAR = "Cellular 4G/5G"
 
 
 class DeviceType(str, Enum):
-    CAMERA = "Camera"
-    SIREN = "Siren"
-    MOTION_SENSOR = "Motion Sensor"
-    DOOR_SENSOR = "Door Contact"
-    PANIC_BUTTON = "Panic Button"
+    CAMERA = "CAMERA"
+    SIREN = "SIREN"
+    MOTION_SENSOR = "MOTION_SENSOR"
+    DOOR_SENSOR = "DOOR_SENSOR"
+    PANIC_BUTTON = "PANIC_BUTTON"
 
 
 class StagingStatus(str, Enum):
-    DISCOVERED = "discovered"  # Discovered via BLE or Wi-Fi scan
-    VALIDATED = "validated"    # QR code validated & token issued
-    PAIRED = "paired"          # Fully paired to user/property
-    EXPIRED = "expired"        # Staging session timed out
+    DISCOVERED = "DISCOVERED"  # Discovered via BLE or Wi-Fi scan
+    VALIDATED = "VALIDATED"    # QR code validated & token issued
+    PAIRED = "PAIRED"          # Fully paired to user/property
+    EXPIRED = "EXPIRED"        # Staging session timed out
 
 
 class OnboardingMethod(str, Enum):
     MANUAL = "manual"
     QR_CODE = "qr_code"
     AUTO_DISCOVERY = "auto_discovery"
-
-
 # Helper function to serialize Enum values safely to PostgreSQL native ENUMs
 def enum_values(enum_cls):
     return lambda obj: [e.value for e in obj]

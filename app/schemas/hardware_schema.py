@@ -28,25 +28,24 @@ class ConnectivityType(str, Enum):
 
 
 class DeviceType(str, Enum):
-    CAMERA = "Camera"
-    SIREN = "Siren"
-    MOTION_SENSOR = "Motion Sensor"
-    DOOR_SENSOR = "Door Contact"
-    PANIC_BUTTON = "Panic Button"
+    CAMERA = "CAMERA"
+    SIREN = "SIREN"
+    MOTION_SENSOR = "MOTION_SENSOR"
+    DOOR_SENSOR = "DOOR_SENSOR"
+    PANIC_BUTTON = "PANIC_BUTTON"
 
 
 class StagingStatus(str, Enum):
-    DISCOVERED = "discovered"
-    VALIDATED = "validated"
-    PAIRED = "paired"
-    EXPIRED = "expired"
+    DISCOVERED = "DISCOVERED"
+    VALIDATED = "VALIDATED"
+    PAIRED = "PAIRED"
+    EXPIRED = "EXPIRED"
 
 
 class OnboardingMethod(str, Enum):
     MANUAL = "manual"
     QR_CODE = "qr_code"
     AUTO_DISCOVERY = "auto_discovery"
-
 
 # ==========================================
 # 2. DISCOVERY & STAGING SCHEMAS
