@@ -17,7 +17,8 @@ from app.models.hardware_model import Camera, DiscoveredDevice, CameraStatus, St
 import app.schemas.hardware_schema as schemas
 
 # Initialize a SINGLE router instance for all hardware endpoints
-router = APIRouter()
+router = APIRouter(prefix="/api/v1/hardware", tags=["Hardware & Camera Registration"]
+)
 
 
 # ==========================================

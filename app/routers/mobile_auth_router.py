@@ -1,12 +1,13 @@
 import random
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status
+from starlette.concurrency import run_in_threadpool
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from pwdlib import PasswordHash
 
 from app.core.database import get_db
-from app.models.mobile_user_model import MobileUser,EmergencyContact
+from app.models.mobile_user_model import MobileUser, EmergencyContact
 from app.schemas.mobile_user_schema import (
     MobileUserRegisterSchema,
     MobileUserLoginSchema,
@@ -65,8 +66,8 @@ async def register_mobile_user(
                 detail="Mobile user with this email already exists."
             )
 
-    # Hash password securely using pwdlib
-    hashed_pwd = password_hash.hash(payload.password)
+    # FIX: Offload CPU-heavy hashing to threadpool to avoid event loop stalls
+    hashed_pwd = await run_in_threadpool(password_hash.hash, payload.password)
 
     new_user = MobileUser(
         full_name=payload.full_name,
@@ -88,30 +89,40 @@ async def login_mobile_user(
     payload: MobileUserLoginSchema,
     db: AsyncSession = Depends(get_db)
 ):
-    if not payload.email and not payload.phone_number:
+    # Normalize empty strings to None
+    email = payload.email.strip() if payload.email and payload.email.strip() else None
+    phone_number = payload.phone_number.strip() if payload.phone_number and payload.phone_number.strip() else None
+
+    if not email and not phone_number:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Please provide either an email or phone number to log in."
         )
 
     # Allow login via either email or phone number
-    if payload.email:
-        query = select(MobileUser).where(MobileUser.email == payload.email)
+    if email:
+        query = select(MobileUser).where(MobileUser.email == email)
     else:
-        query = select(MobileUser).where(MobileUser.phone_number == payload.phone_number)
+        query = select(MobileUser).where(MobileUser.phone_number == phone_number)
 
     result = await db.execute(query)
     user = result.scalar_one_or_none()
 
-    # Verify password hash
-    if not user or not password_hash.verify(payload.password, user.hashed_password):
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials."
+        )
+
+    # Offload CPU-heavy hash verification to threadpool
+    is_valid_password = await run_in_threadpool(password_hash.verify, payload.password, user.hashed_password)
+    if not is_valid_password:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials."
         )
 
     return user
-
 
 # ==========================================
 # Phone OTP Endpoints
@@ -132,7 +143,6 @@ async def send_phone_otp(
             detail="User with this phone number not found."
         )
 
-    # Hardcode OTP during development or generate random 6-digit OTP code
     otp = STATIC_TEST_OTP if USE_HARDCODED_OTP else f"{random.randint(100000, 999999)}"
     
     user.phone_otp_code = otp
@@ -162,7 +172,6 @@ async def verify_phone_otp(
             detail="User not found."
         )
 
-    # Check if the entered OTP matches dev hardcoded OTP or stored database OTP
     is_dev_otp = USE_HARDCODED_OTP and payload.otp_code == STATIC_TEST_OTP
     is_db_otp = user.phone_otp_code and user.phone_otp_code == payload.otp_code
 
@@ -172,7 +181,6 @@ async def verify_phone_otp(
             detail="Invalid OTP code."
         )
 
-    # Only check expiration if NOT using the dev test OTP
     if not is_dev_otp:
         if user.phone_otp_expires_at and datetime.utcnow() > user.phone_otp_expires_at:
             raise HTTPException(
@@ -180,7 +188,6 @@ async def verify_phone_otp(
                 detail="OTP code has expired. Please request a new one."
             )
 
-    # Update verification status and clear token
     user.is_phone_verified = True
     user.phone_otp_code = None
     user.phone_otp_expires_at = None
@@ -211,7 +218,6 @@ async def send_email_otp(
             detail="User with this email not found."
         )
 
-    # Hardcode OTP during development or generate random 6-digit OTP code
     otp = STATIC_TEST_OTP if USE_HARDCODED_OTP else f"{random.randint(100000, 999999)}"
     
     user.email_otp_code = otp
@@ -241,7 +247,6 @@ async def verify_email_otp(
             detail="User not found."
         )
 
-    # Check if the entered OTP matches dev hardcoded OTP or stored database OTP
     is_dev_otp = USE_HARDCODED_OTP and payload.otp_code == STATIC_TEST_OTP
     is_db_otp = user.email_otp_code and user.email_otp_code == payload.otp_code
 
@@ -251,7 +256,6 @@ async def verify_email_otp(
             detail="Invalid verification code."
         )
 
-    # Only check expiration if NOT using the dev test OTP
     if not is_dev_otp:
         if user.email_otp_expires_at and datetime.utcnow() > user.email_otp_expires_at:
             raise HTTPException(
@@ -259,7 +263,6 @@ async def verify_email_otp(
                 detail="Verification code has expired. Please request a new one."
             )
 
-    # Update verification status and clear token
     user.is_email_verified = True
     user.email_otp_code = None
     user.email_otp_expires_at = None
@@ -280,10 +283,6 @@ async def setup_user_pins(
     payload: SetUserPinsRequestSchema,
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Saves and hashes both Normal and Duress security PINs for a user,
-    and updates the onboarding setup step.
-    """
     if payload.normal_pin == payload.duress_pin:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -300,12 +299,11 @@ async def setup_user_pins(
             detail="User not found."
         )
 
-    # Hash both PINs securely
-    user.hashed_normal_pin = password_hash.hash(payload.normal_pin)
-    user.hashed_duress_pin = password_hash.hash(payload.duress_pin)
+    # FIX: Offload PIN hashing to threadpool
+    user.hashed_normal_pin = await run_in_threadpool(password_hash.hash, payload.normal_pin)
+    user.hashed_duress_pin = await run_in_threadpool(password_hash.hash, payload.duress_pin)
     user.has_setup_pins = True
 
-    # Advance setup step to Step 2
     if user.account_setup_step < 2:
         user.account_setup_step = 2
 
@@ -322,10 +320,6 @@ async def verify_sos_cancellation_pin(
     payload: ValidateSOSPinRequestSchema,
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Validates an entered PIN during SOS alert verification.
-    Returns whether the normal PIN or duress PIN was entered.
-    """
     query = select(MobileUser).where(MobileUser.id == payload.user_id)
     result = await db.execute(query)
     user = result.scalar_one_or_none()
@@ -336,21 +330,21 @@ async def verify_sos_cancellation_pin(
             detail="User PINs are not configured."
         )
 
-    # 1. Check Normal PIN
-    if password_hash.verify(payload.pin_entered, user.hashed_normal_pin):
+    # FIX: Offload PIN verification to threadpool
+    is_normal = await run_in_threadpool(password_hash.verify, payload.pin_entered, user.hashed_normal_pin)
+    if is_normal:
         return ValidateSOSPinResponseSchema(
             status="verified_normal_pin",
             is_duress=False
         )
 
-    # 2. Check Duress PIN
-    if password_hash.verify(payload.pin_entered, user.hashed_duress_pin):
+    is_duress = await run_in_threadpool(password_hash.verify, payload.pin_entered, user.hashed_duress_pin)
+    if is_duress:
         return ValidateSOSPinResponseSchema(
             status="verified_duress_pin",
             is_duress=True
         )
 
-    # 3. Invalid PIN
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid PIN code."
@@ -389,23 +383,21 @@ async def select_primary_use_case(
 @router.post("/emergency-contacts", response_model=EmergencyContactResponseSchema)
 async def add_emergency_contact(
     contact: CreateEmergencyContactSchema,
-    db: AsyncSession = Depends(get_db)  # Inject database session
+    db: AsyncSession = Depends(get_db)
 ):
-    # 1. Create database model instance
     new_contact = EmergencyContact(
-        user_id=contact.user_id,  # Ensure your Create EmergencyContactSchema passes user_id
+        user_id=contact.user_id,
         full_name=contact.full_name,
         relationship=contact.relationship,
         phone_number=contact.phone_number,
     )
 
-    # 2. Add and commit to generating auto-incrementing ID
     db.add(new_contact)
     await db.commit()
     await db.refresh(new_contact)
 
-    # 3. Return saved contact with its real dynamic ID
     return new_contact
+
 
 @router.post("/update-setup-step", response_model=MobileUserResponseSchema)
 async def update_account_setup_step(

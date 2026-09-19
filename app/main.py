@@ -1,8 +1,11 @@
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.database import Base, async_engine
 
@@ -13,7 +16,6 @@ logger = logging.getLogger("endra_api")
 # ==========================================
 # 1. MODEL IMPORTS (Explicitly Register Metadata)
 # ==========================================
-# Importing these registers ALL tables with Base.metadata before startup sync
 from app.models.hardware_model import Camera, DiscoveredDevice
 from app.models.mobile_user_model import EmergencyContact, MobileUser
 from app.models.property_model import Property
@@ -63,6 +65,50 @@ app = FastAPI(
 
 
 # ==========================================
+# 3. CORS MIDDLEWARE (Configured for Credentials & Web Compatibility)
+# ==========================================
+# ⚠️ Note: If allow_credentials=True, browsers reject wildcard "*" origins.
+# Using allow_origin_regex allows any localhost port or Render frontend URL cleanly.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:[0-9]+)?|https://.*\.onrender\.com",
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_headers=["*"],
+)
+
+
+# ==========================================
+# 4. GLOBAL EXCEPTION HANDLERS
+# ==========================================
+# CORSMiddleware handles headers globally; removing manual CORS headers here
+# prevents duplicate/conflicting header errors in the browser.
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={"detail": exc.errors()},
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unhandled server error: {str(exc)}", exc_info=True)
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": "Internal server error"},
+    )
+
+
+# ==========================================
 # CUSTOM OPENAPI METADATA (For WebSockets in Swagger UI)
 # ==========================================
 def custom_openapi():
@@ -76,7 +122,6 @@ def custom_openapi():
         routes=app.routes,
     )
 
-    # Manually append your WebSocket route to the OpenAPI spec
     openapi_schema["paths"]["/ws"] = {
         "get": {
             "tags": ["WebSocket Real-time Feeds"],
@@ -97,25 +142,12 @@ def custom_openapi():
 app.openapi = custom_openapi
 
 
-# Enable CORS for Flutter mobile app, web clients, and Swagger UI
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 # ==========================================
-# 3. ROUTER REGISTRATION
+# 5. ROUTER REGISTRATION
 # ==========================================
 app.include_router(mobile_auth_router.router)
 app.include_router(property_router.router)
-app.include_router(
-    hardware_router.router, 
-    prefix="/api/v1/hardware", 
-    tags=["Hardware & Camera Registration"]
-)
+app.include_router(hardware_router.router)    
 app.include_router(websocket_router.router)
 app.include_router(dashboard_router.router)
 app.include_router(message_router.router)
