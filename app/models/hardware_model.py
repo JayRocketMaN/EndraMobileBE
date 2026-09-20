@@ -24,11 +24,21 @@ class ConnectionProtocol(str, Enum):
 
 
 class CameraStatus(str, Enum):
-    CONNECTED = "connected"
-    DISCONNECTED = "disconnected"
-    AUTHENTICATION_FAILED = "auth_failed"
-    UNREACHABLE = "unreachable"
+    ONLINE = "ONLINE"
+    OFFLINE = "OFFLINE"
+    AUTHENTICATION_FAILED = "AUTH_FAILED"
+    UNREACHABLE = "UNREACHABLE"
 
+    # Backward compatibility alias for "connected" string payloads
+    @classmethod
+    def _missing_(cls, value):
+        if isinstance(value, str):
+            val_upper = value.upper()
+            if val_upper in ("CONNECTED", "ONLINE"):
+                return cls.ONLINE
+            if val_upper in ("DISCONNECTED", "OFFLINE"):
+                return cls.OFFLINE
+        return None
 
 class ConnectivityType(str, Enum):
     BLE = "Bluetooth Low Energy"
