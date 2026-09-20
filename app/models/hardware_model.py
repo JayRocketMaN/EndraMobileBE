@@ -199,7 +199,7 @@ class Camera(Base):
     # System Status & Metadata
     status: Mapped[CameraStatus] = mapped_column(
         SQLEnum(CameraStatus, values_callable=enum_values(CameraStatus)), 
-        default=CameraStatus.CONNECTED, 
+        default=CameraStatus.ONLINE, 
         nullable=False
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

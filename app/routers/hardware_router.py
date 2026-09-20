@@ -162,7 +162,7 @@ async def _persist_paired_device(
         camera.username = request.username
         camera.password = request.password
         camera.stream_url = rtsp_url
-        camera.status = CameraStatus.CONNECTED
+        camera.status = CameraStatus.ONLINE
         camera.assigned_zone = request.zone_name or camera.assigned_zone
     else:
         camera = Camera(
@@ -175,7 +175,7 @@ async def _persist_paired_device(
             custom_stream_path=getattr(request, "custom_stream_path", None),
             assigned_zone=getattr(request, "zone_name", "Default Zone"),
             stream_url=rtsp_url,
-            status=CameraStatus.CONNECTED
+            status=CameraStatus.ONLINE
         )
         db.add(camera)
 
@@ -414,7 +414,7 @@ async def _persist_paired_device(
         username=request.username,
         password=request.password,
         stream_url=rtsp_url,
-        status=CameraStatus.CONNECTED,
+        status=CameraStatus.ONLINE,
         is_active=True,
         owner_id=getattr(request, "owner_id", None),
         property_id=getattr(request, "property_id", None)
@@ -572,7 +572,7 @@ async def manual_camera_setup(
         existing_camera.custom_stream_path = getattr(payload, "custom_stream_path", None)
         existing_camera.assigned_zone = getattr(payload, "assigned_zone", "Default Zone")
         existing_camera.stream_url = constructed_url
-        existing_camera.status = CameraStatus.CONNECTED
+        existing_camera.status = CameraStatus.ONLINE
         camera = existing_camera
     else:
         camera = Camera(
@@ -585,7 +585,7 @@ async def manual_camera_setup(
             custom_stream_path=getattr(payload, "custom_stream_path", None),
             assigned_zone=getattr(payload, "assigned_zone", "Default Zone"),
             stream_url=constructed_url,
-            status=CameraStatus.CONNECTED
+            status=CameraStatus.ONLINE
         )
         db.add(camera)
 
