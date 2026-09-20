@@ -68,18 +68,11 @@ app = FastAPI(
 # ==========================================
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:51622", #endra-mobile 
-        "http://localhost:56523", #endra
-        #"http://localhost:3000",
-        #"http://localhost:8080",
-        #"http://127.0.0.1:3000",
-    ],
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:[0-9]+)?|https://.*\.onrender\.com",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 # ==========================================
 # 4. GLOBAL EXCEPTION HANDLERS
 # ==========================================
