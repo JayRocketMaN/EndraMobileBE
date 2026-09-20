@@ -63,20 +63,21 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-
 # ==========================================
 # 3. CORS MIDDLEWARE (Configured for Credentials & Web Compatibility)
 # ==========================================
-# ⚠️ Note: If allow_credentials=True, browsers reject wildcard "*" origins.
-# Using allow_origin_regex allows any localhost port or Render frontend URL cleanly.
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:[0-9]+)?|https://.*\.onrender\.com",
+    allow_origins=[
+        "http://localhost:51622", #endra-mobile 
+        #"http://localhost:3000",
+        #"http://localhost:8080",
+        #"http://127.0.0.1:3000",
+    ],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 # ==========================================
 # 4. GLOBAL EXCEPTION HANDLERS

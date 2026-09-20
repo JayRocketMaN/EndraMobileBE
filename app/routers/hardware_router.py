@@ -607,11 +607,19 @@ async def manual_camera_setup(
 # ==========================================
 # 4. UNIFIED CAMERA CRUD & AGGREGATION
 # ==========================================
-
 @router.get("/cameras", response_model=List[schemas.CameraResponse])
 async def list_all_cameras(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Camera))
-    return result.scalars().all()
+    cameras = result.scalars().all()
+    
+    # Check if the query returned no cameras
+    if not cameras:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No camera attached to this account yet."
+        )
+        
+    return cameras
 
 
 @router.get("/cameras/{camera_id}", response_model=schemas.CameraResponse)
