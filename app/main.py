@@ -70,6 +70,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:51622", #endra-mobile 
+        "http://localhost:56523", #endra
         #"http://localhost:3000",
         #"http://localhost:8080",
         #"http://127.0.0.1:3000",
