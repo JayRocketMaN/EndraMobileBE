@@ -12,6 +12,7 @@ from app.schemas.mobile_user_schema import (
     MobileUserRegisterSchema,
     MobileUserLoginSchema,
     MobileUserResponseSchema,
+    LogoutResponseSchema,
     SendPhoneOTPRequestSchema,
     VerifyPhoneOTPRequestSchema,
     SendEmailOTPRequestSchema,
@@ -82,7 +83,6 @@ async def register_mobile_user(
     await db.refresh(new_user)
 
     return new_user
-
 
 @router.post("/login", response_model=MobileUserResponseSchema)
 async def login_mobile_user(
@@ -469,6 +469,27 @@ async def complete_onboarding(
 
     user.is_onboarding_completed = True
     user.account_setup_step = 4
+
+    await db.commit()
+    await db.refresh(user)
+
+    return user
+
+
+@router.post("/logout", response_model=LogoutResponseSchema)
+async def logout_mobile_user(
+    user_id: int,
+    db: AsyncSession = Depends(get_db)
+):
+    query = select(MobileUser).where(MobileUser.id == user_id)
+    result = await db.execute(query)
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found."
+        )
 
     await db.commit()
     await db.refresh(user)

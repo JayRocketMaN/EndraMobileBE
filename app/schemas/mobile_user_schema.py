@@ -175,6 +175,9 @@ class UpdateAccountSetupStepSchema(BaseModel):
 # Response Schemas
 # ==========================================
 
+class LogoutResponseSchema(BaseModel):
+    message: str = "Successfully logged out"
+    
 class OTPStatusResponseSchema(BaseModel):
     message: str
     success: bool
