@@ -4,6 +4,8 @@ from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Optional, List
 import re
 
+from app.models.mobile_user_model import SubscriptionTier
+
 # ==========================================
 # Enums
 # ==========================================
@@ -121,6 +123,15 @@ class ValidateSOSPinResponseSchema(BaseModel):
     is_duress: bool
 
 
+class UpdateNormalPinRequestSchema(BaseModel):
+    user_id: int # or UUID depending on your model
+    current_pin: str
+    new_normal_pin: str
+
+class UpdateDuressPinRequestSchema(BaseModel):
+    user_id: int
+    current_pin: str
+    new_duress_pin: str
 # ==========================================
 # Account Setup & Onboarding Schemas
 # ==========================================
@@ -177,6 +188,7 @@ class UpdateAccountSetupStepSchema(BaseModel):
 
 class LogoutResponseSchema(BaseModel):
     message: str = "Successfully logged out"
+    success: bool = True
     
 class OTPStatusResponseSchema(BaseModel):
     message: str
@@ -207,3 +219,69 @@ class MobileUserResponseSchema(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+
+# ==========================================
+# Plan Display & Status Schemas
+# ==========================================
+class PlanFeatureSchema(BaseModel):
+    name: str
+    available: bool
+
+
+class PlanDetailsSchema(BaseModel):
+    tier: SubscriptionTier
+    title: str
+    price_ngn: int
+    interval: str = "month"
+    features: List[str]
+    is_current: bool = False
+    can_start_trial: bool = False
+
+
+class UserSubscriptionStatusResponseSchema(BaseModel):
+    user_id: int
+    current_tier: Optional[SubscriptionTier] = None
+    is_trial_active: bool = False
+    trial_ends_at: Optional[datetime] = None
+    subscription_expires_at: Optional[datetime] = None
+    plans: Optional[List[PlanDetailsSchema]] = None
+
+
+# ==========================================
+# Plan Selection & Upgrade Schemas
+# ==========================================
+class SelectPlanRequestSchema(BaseModel):
+    target_tier: SubscriptionTier
+    start_trial: bool = True
+
+
+class PlanUpgradeResponseSchema(BaseModel):
+    message: str
+    success: bool
+    requires_payment: bool = False
+    checkout_url: Optional[str] = None
+    transaction_ref: Optional[str] = None
+
+
+# ==========================================
+# Squad GTCO Payment Processing Schemas
+# ==========================================
+class InitiatePaymentRequestSchema(BaseModel):
+    target_tier: SubscriptionTier
+    amount: float = Field(..., gt=0, description="Amount in NGN")
+
+
+class InitiatePaymentResponseSchema(BaseModel):
+    message: str
+    success: bool
+    checkout_url: Optional[str] = None
+    transaction_ref: str
+
+
+class VerifyPaymentResponseSchema(BaseModel):
+    message: str
+    success: bool
+    current_tier: SubscriptionTier
+    subscription_expires_at: datetime

@@ -28,6 +28,7 @@ from app.routers import (
     hardware_router,
     message_router,
     mobile_auth_router,
+    profile_plan_router,
     property_router,
     websocket_router,
 )
@@ -66,9 +67,21 @@ app = FastAPI(
 # ==========================================
 # 3. CORS MIDDLEWARE (Configured for Credentials & Web Compatibility)
 # ==========================================
+origins = [
+    "http://localhost",
+    "http://localhost:3000",
+    "http://localhost:8000",
+    "http://localhost:5173",  # Common Vite dev port
+    "http://127.0.0.1",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:8000",
+    "http://10.0.2.2:8000",   # Android Emulator host loopback
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:[0-9]+)?|https://.*\.onrender\.com",
+    allow_origins=origins,
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+)(:[0-9]+)?|https://.*\.onrender\.com",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -146,6 +159,7 @@ app.include_router(hardware_router.router)
 app.include_router(websocket_router.router)
 app.include_router(dashboard_router.router)
 app.include_router(message_router.router)
+app.include_router(profile_plan_router.router)
 
 
 @app.get("/", tags=["Health Check"])

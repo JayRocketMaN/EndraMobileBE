@@ -21,6 +21,8 @@ from app.schemas.mobile_user_schema import (
     SetUserPinsRequestSchema,
     ValidateSOSPinRequestSchema,
     ValidateSOSPinResponseSchema,
+    UpdateNormalPinRequestSchema,
+    UpdateDuressPinRequestSchema,
     SelectUseCaseRequestSchema,
     CreateEmergencyContactSchema,
     EmergencyContactResponseSchema,
@@ -350,6 +352,104 @@ async def verify_sos_cancellation_pin(
         detail="Invalid PIN code."
     )
 
+# ==========================================
+# Individual PIN Update Endpoints
+# ==========================================
+
+@router.put("/update-normal-pin", response_model=OTPStatusResponseSchema)
+async def update_normal_pin(
+    payload: UpdateNormalPinRequestSchema,
+    db: AsyncSession = Depends(get_db)
+):
+    query = select(MobileUser).where(MobileUser.id == payload.user_id)
+    result = await db.execute(query)
+    user = result.scalar_one_or_none()
+
+    if not user or not user.hashed_normal_pin:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found or PINs not set up."
+        )
+
+    # 1. Verify current normal PIN
+    is_current_valid = await run_in_threadpool(
+        password_hash.verify, payload.current_pin, user.hashed_normal_pin
+    )
+    if not is_current_valid:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect current PIN."
+        )
+
+    # 2. Ensure new normal PIN does not match existing duress PIN
+    if user.hashed_duress_pin:
+        is_same_as_duress = await run_in_threadpool(
+            password_hash.verify, payload.new_normal_pin, user.hashed_duress_pin
+        )
+        if is_same_as_duress:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Normal PIN cannot be the same as Duress PIN."
+            )
+
+    # 3. Update normal PIN
+    user.hashed_normal_pin = await run_in_threadpool(
+        password_hash.hash, payload.new_normal_pin
+    )
+    await db.commit()
+
+    return OTPStatusResponseSchema(
+        message="Normal PIN updated successfully.",
+        success=True
+    )
+
+
+@router.put("/update-duress-pin", response_model=OTPStatusResponseSchema)
+async def update_duress_pin(
+    payload: UpdateDuressPinRequestSchema,
+    db: AsyncSession = Depends(get_db)
+):
+    query = select(MobileUser).where(MobileUser.id == payload.user_id)
+    result = await db.execute(query)
+    user = result.scalar_one_or_none()
+
+    if not user or not user.hashed_duress_pin:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found or PINs not set up."
+        )
+
+    # 1. Verify current duress PIN (or current normal PIN depending on your security policy)
+    is_current_valid = await run_in_threadpool(
+        password_hash.verify, payload.current_pin, user.hashed_duress_pin
+    )
+    if not is_current_valid:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect current PIN."
+        )
+
+    # 2. Ensure new duress PIN does not match existing normal PIN
+    if user.hashed_normal_pin:
+        is_same_as_normal = await run_in_threadpool(
+            password_hash.verify, payload.new_duress_pin, user.hashed_normal_pin
+        )
+        if is_same_as_normal:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Duress PIN cannot be the same as Normal PIN."
+            )
+
+    # 3. Update duress PIN
+    user.hashed_duress_pin = await run_in_threadpool(
+        password_hash.hash, payload.new_duress_pin
+    )
+    await db.commit()
+
+    return OTPStatusResponseSchema(
+        message="Duress PIN updated successfully.",
+        success=True
+    )
 
 # ==========================================
 # Account Setup & Onboarding Endpoints
@@ -491,7 +591,10 @@ async def logout_mobile_user(
             detail="User not found."
         )
 
-    await db.commit()
-    await db.refresh(user)
+    # Optional backend session/token invalidation logic can go here 
+    # (e.g., deleting push tokens or clearing session entries)
 
-    return user
+    return LogoutResponseSchema(
+        message="Logged out successfully.",
+        success=True
+    )
