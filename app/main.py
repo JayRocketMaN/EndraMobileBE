@@ -63,22 +63,29 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+# ==========================================
+# 3. CORS MIDDLEWARE (Restored & Web Compatible)
+# ==========================================
+origins = [
+    "http://localhost",
+    "http://localhost:3000",
+    "http://localhost:8000",
+    "http://localhost:5173",  # Common Vite dev port
+    "http://127.0.0.1",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:8000",
+    "http://10.0.2.2:8000",   # Android Emulator host loopback
+]
 
-# ==========================================
-# 3. CORS MIDDLEWARE (Configured for Credentials & Web Compatibility)
-# ==========================================
 app.add_middleware(
     CORSMiddleware,
-    # 1. Explicitly allow any localhost port during development
-   allow_origins=["http://localhost:53572", "http://localhost:3000", "http://127.0.0.1:8000"],
-    # 2. Fix the regex grouping using an outer non-capturing group (?: )
-    allow_origin_regex=r"^(https?://(?:localhost|127\.0\.0\.1|192\.168\.\d+\.\d+)(?::[0-9]+)?|https://.*\.onrender\.com)$",
+    allow_origins=origins,
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+)(:[0-9]+)?|https://.*\.onrender\.com",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ==========================================
 # 4. GLOBAL EXCEPTION HANDLERS
 # ==========================================
 # CORSMiddleware handles headers globally; removing manual CORS headers here
