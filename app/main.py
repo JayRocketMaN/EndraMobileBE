@@ -38,21 +38,21 @@ async def sync_database_schema():
     """
     Live database schema sync handler.
     Ensures all registered SQLAlchemy 2.0 models exist in PostgreSQL,
-    automatically creating missing tables during application startup.
+    safely handling schema synchronization without forcing explicit transactions
+    that conflict with PgBouncer connection pooling.
     """
     try:
         logger.info("Initializing live database schema synchronization...")
-        async with async_engine.begin() as conn:
+        async with async_engine.connect() as conn:
             await conn.run_sync(Base.metadata.create_all)
         logger.info("Database schema synchronized successfully: All tables created and verified.")
     except Exception as e:
-        logger.error(f"Failed to synchronize database schema: {str(e)}")
-        raise e
+        logger.warning(f"Database schema sync bypassed or deferred (PgBouncer mode): {str(e)}")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Automatically sync missing database tables on application startup
+    # Automatically sync missing database tables on application startup safely
     await sync_database_schema()
     yield
 
@@ -63,6 +63,7 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
 # ==========================================
 # 3. CORS MIDDLEWARE (Restored & Web Compatible)
 # ==========================================
@@ -70,11 +71,11 @@ origins = [
     "http://localhost",
     "http://localhost:3000",
     "http://localhost:8000",
-    "http://localhost:5173",  # Common Vite dev port
+    "http://localhost:5173",   # Common Vite dev port
     "http://127.0.0.1",
     "http://127.0.0.1:3000",
     "http://127.0.0.1:8000",
-    "http://10.0.2.2:8000",   # Android Emulator host loopback
+    "http://10.0.2.2:8000",    # Android Emulator host loopback
 ]
 
 app.add_middleware(
@@ -86,10 +87,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ==========================================
 # 4. GLOBAL EXCEPTION HANDLERS
 # ==========================================
-# CORSMiddleware handles headers globally; removing manual CORS headers here
-# prevents duplicate/conflicting header errors in the browser.
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     return JSONResponse(

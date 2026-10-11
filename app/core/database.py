@@ -2,6 +2,7 @@ from typing import AsyncGenerator, Generator
 from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import DeclarativeBase, sessionmaker, Session
+from sqlalchemy.pool import NullPool
 from app.core.config import settings
 
 
@@ -13,11 +14,13 @@ class Base(DeclarativeBase):
 # ASYNC ENGINE & SESSION (For FastAPI Routers)
 async_engine = create_async_engine(
     settings.DATABASE_URL,
-    echo=False,  # Set to True for SQL query debugging in development
+    echo=False,
     future=True,
-    pool_size=20,  # Base connection pool size for concurrent mobile API traffic
-    max_overflow=10,  # Temporary burst connections during peak load
-    pool_pre_ping=True,  # Proactively drops stale/broken connections
+    poolclass=NullPool,  # Let PgBouncer handle connection pooling
+    connect_args={
+        "statement_cache_size": 0,  # Required for PgBouncer compatibility
+        "prepared_statement_cache_size": 0,
+    }
 )
 
 AsyncSessionLocal = async_sessionmaker(
@@ -42,7 +45,7 @@ sync_url = settings.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql+pg
 
 sync_engine = create_engine(
     sync_url,
-    echo=False,  # Prevents massive log clutter during high-frequency worker loops
+    echo=False,
     future=True,
     pool_size=10,
     max_overflow=5,
