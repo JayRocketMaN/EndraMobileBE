@@ -40,12 +40,12 @@ class CameraStatus(str, Enum):
                 return cls.OFFLINE
         return None
 
-class ConnectivityType(str, Enum):
-    BLE = "Bluetooth Low Energy"
-    WIFI = "Wi-Fi"            # Updated from "Wi-Fi" to accept "WIFI"
-    WI_FI = "Wi-Fi"          # Canonical representation matching DB
-    CELLULAR = "Cellular 4G/5G"
 
+class ConnectivityType(str, Enum):
+    BLE = "BLE"
+    WIFI = "WIFI"          # Must match the DB value 'WIFI' exactly!
+    CELLULAR = "CELLULAR"
+    
 
 class DeviceType(str, Enum):
     CAMERA = "CAMERA"

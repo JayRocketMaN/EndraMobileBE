@@ -10,7 +10,7 @@ from sqlalchemy.future import select
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.models.mobile_user_model import User
+from app.models.mobile_user_model import MobileUser
 
 # Optional bearer extraction utility helper to prevent API route clutter
 security_bearer = HTTPBearer(auto_error=False)
@@ -98,7 +98,7 @@ async def get_current_user(
     request: Request, 
     header_cred: Optional[HTTPAuthorizationCredentials] = Depends(security_bearer),
     db: AsyncSession = Depends(get_db)
-) -> User:
+) -> MobileUser:
     """
     Extracts JWT from browser HttpOnly cookies OR fallback HTTP Authorization headers,
     verifying identity parameters against dual multi-tenant registration entries.
@@ -143,8 +143,8 @@ async def get_current_user(
 
     # 4. Asynchronously search PostgreSQL across both identifier indices simultaneously
     result = await db.execute(
-        select(User).where(
-            (User.email == identity_subject) | (User.phone_number == identity_subject)
+        select(MobileUser).where(
+            (MobileUser.email == identity_subject) | (MobileUser.phone_number == identity_subject)
         )
     )
     user = result.scalar_one_or_none()

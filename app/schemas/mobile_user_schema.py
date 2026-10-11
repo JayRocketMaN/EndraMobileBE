@@ -109,13 +109,13 @@ class VerifyEmailOTPRequestSchema(BaseModel):
 
 class SetUserPinsRequestSchema(BaseModel):
     user_id: int = Field(..., json_schema_extra={"example": 1})
-    normal_pin: str = Field(..., min_length=6, max_length=6, json_schema_extra={"example": "123456"})
-    duress_pin: str = Field(..., min_length=6, max_length=6, json_schema_extra={"example": "654321"})
+    normal_pin: str = Field(..., min_length=4, max_length=4, json_schema_extra={"example": "123456"})
+    duress_pin: str = Field(..., min_length=4, max_length=4, json_schema_extra={"example": "654321"})
 
 
 class ValidateSOSPinRequestSchema(BaseModel):
     user_id: int
-    pin_entered: str = Field(..., min_length=6, max_length=6, json_schema_extra={"example": "123456"})
+    pin_entered: str = Field(..., min_length=4, max_length=4, json_schema_extra={"example": "123456"})
 
 
 class ValidateSOSPinResponseSchema(BaseModel):
@@ -144,7 +144,7 @@ class SelectUseCaseRequestSchema(BaseModel):
 class CreateEmergencyContactSchema(BaseModel):
     user_id: int = Field(..., json_schema_extra={"example": 1})
     full_name: str = Field(..., json_schema_extra={"example": "Adaeze Obi"})
-    relationship: str = Field(..., json_schema_extra={"example": "Mother"})
+    relation: str = Field(..., json_schema_extra={"example": "Mother"})  
     phone_number: str = Field(..., json_schema_extra={"example": "+2348012345678"})
 
 
@@ -152,7 +152,7 @@ class EmergencyContactResponseSchema(BaseModel):
     id: int
     user_id: int
     full_name: str
-    relationship: str
+    relation: str  
     phone_number: str
     created_at: datetime
 
@@ -163,6 +163,11 @@ class EmergencyContactResponseSchema(BaseModel):
 class EmergencyContactListResponseSchema(BaseModel):
     contacts: List[EmergencyContactResponseSchema]
     total: int
+
+class UpdateEmergencyContactSchema(BaseModel):
+    full_name: Optional[str] = Field(None, json_schema_extra={"example": "Adaeze Obi"})
+    relationship: Optional[str] = Field(None, json_schema_extra={"example": "Mother"})
+    phone_number: Optional[str] = Field(None, json_schema_extra={"example": "+2348012345678"})    
 
 
 class UpdateAppPermissionsSchema(BaseModel):

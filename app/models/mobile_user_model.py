@@ -103,7 +103,7 @@ class EmergencyContact(Base):
     )
     
     full_name: Mapped[str] = mapped_column(String(150), nullable=False)
-    relationship_type: Mapped[str] = mapped_column("relationship", String(50), nullable=False)  # Map database column 'relationship' to attribute 'relationship_type' to prevent variable shadowing
+    relation: Mapped[str] = mapped_column(String(50), nullable=False)  # Clean attribute name matching schema
     phone_number: Mapped[str] = mapped_column(String(50), nullable=False)
     
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

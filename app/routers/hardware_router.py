@@ -73,7 +73,10 @@ async def verify_activation_token(db: AsyncSession, token: str):
 
 
 def parse_third_party_qr(qr_payload: str) -> Dict[str, Any]:
-    """Parses QR string formats: JSON objects, Key-Value pairs, or raw MAC/Serial strings."""
+    """
+    Parses QR string formats: JSON objects, Key-Value pairs, or raw MAC/Serial strings.
+    Explicitly extracts connectivity metrics to prevent database validation errors.
+    """
     cleaned = qr_payload.strip()
     result: Dict[str, Any] = {
         "identifier": None,
@@ -85,8 +88,10 @@ def parse_third_party_qr(qr_payload: str) -> Dict[str, Any]:
         "channel": None,
         "custom_stream_path": None,
         "protocol": None,
+        "connectivity": "WIFI",  # Matches the raw database enum value exactly
     }
 
+    # --- 1. Handle JSON Object Payloads ---
     if cleaned.startswith("{") and cleaned.endswith("}"):
         try:
             data = json.loads(cleaned)
@@ -97,6 +102,13 @@ def parse_third_party_qr(qr_payload: str) -> Dict[str, Any]:
             result["channel"] = int(data["channel"]) if data.get("channel") else None
             result["custom_stream_path"] = data.get("custom_stream_path") or data.get("path")
             result["protocol"] = data.get("protocol")
+            
+            raw_conn = data.get("connectivity") or data.get("conn")
+            if raw_conn:
+                if str(raw_conn).strip().lower() in ["wi-fi", "wifi", "wi_fi", "wi-fi"]:
+                    result["connectivity"] = "WIFI"
+                else:
+                    result["connectivity"] = str(raw_conn).upper()
 
             identifier = data.get("mac_address") or data.get("mac") or data.get("serial_number") or data.get("sn")
             if identifier:
@@ -106,12 +118,21 @@ def parse_third_party_qr(qr_payload: str) -> Dict[str, Any]:
         except (json.JSONDecodeError, ValueError):
             pass
 
+    # --- 2. Handle Semicolon Key-Value Payloads (e.g., ip=192.168.1.1;port=554) ---
     if "=" in cleaned:
         kv = dict(item.split("=", 1) for item in cleaned.split(";") if "=" in item)
         result["ip_address"] = kv.get("IP") or kv.get("ip")
         result["port"] = int(kv["PORT"]) if "PORT" in kv or "port" in kv else None
         result["username"] = kv.get("USER") or kv.get("username")
         result["password"] = kv.get("PASS") or kv.get("password")
+        
+        raw_conn = kv.get("connectivity") or kv.get("conn") or kv.get("NET")
+        if raw_conn:
+            if str(raw_conn).strip().lower() in ["wi-fi", "wifi", "wi_fi", "wi-fi"]:
+                result["connectivity"] = "WIFI"
+            else:
+                result["connectivity"] = str(raw_conn).upper()
+
         sn = kv.get("SN") or kv.get("SERIAL") or kv.get("s/n")
         mac = kv.get("MAC") or kv.get("mac")
 
@@ -124,64 +145,19 @@ def parse_third_party_qr(qr_payload: str) -> Dict[str, Any]:
             result["type"] = "serial"
             return result
 
+    # --- 3. Handle Raw MAC Format Scans ---
     mac_match = re.search(r'([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})', cleaned)
     if mac_match:
         result["identifier"] = mac_match.group(0).upper()
         result["type"] = "mac"
         return result
 
+    # --- 4. Fallback: Treat as plain serial sequence ---
     if len(cleaned) >= 4:
         result["identifier"] = cleaned
         result["type"] = "serial"
 
     return result
-
-
-async def _persist_paired_device(
-    db: AsyncSession, 
-    request: Any,
-    rtsp_url: str
-) -> Camera:
-    # 1. Update or create the Staged DiscoveredDevice record
-    query = await db.execute(
-        select(DiscoveredDevice).where(DiscoveredDevice.last_known_ip == request.ip_address)
-    )
-    staged = query.scalar_one_or_none()
-    if staged:
-        staged.staging_status = StagingStatus.PAIRED
-    
-    # 2. Check if the camera already exists in the Camera table
-    cam_query = await db.execute(
-        select(Camera).where(Camera.ip_address == request.ip_address)
-    )
-    camera = cam_query.scalar_one_or_none()
-    
-    if camera:
-        camera.device_name = request.device_name
-        camera.port = request.port
-        camera.username = request.username
-        camera.password = request.password
-        camera.stream_url = rtsp_url
-        camera.status = CameraStatus.ONLINE
-        camera.assigned_zone = request.zone_name or camera.assigned_zone
-    else:
-        camera = Camera(
-            device_name=request.device_name,
-            ip_address=request.ip_address,
-            port=request.port or 554,
-            channel=getattr(request, "channel", 1) or 1,
-            username=request.username,
-            password=request.password,
-            custom_stream_path=getattr(request, "custom_stream_path", None),
-            assigned_zone=getattr(request, "zone_name", "Default Zone"),
-            stream_url=rtsp_url,
-            status=CameraStatus.ONLINE
-        )
-        db.add(camera)
-
-    await db.commit()
-    await db.refresh(camera)
-    return camera
 # ==========================================
 # 3. DEVELOPMENT BYPASS UTILITIES
 # ==========================================
@@ -263,12 +239,21 @@ async def validate_third_party_qr(
         if parsed["ip_address"]:
             staged_device.last_known_ip = parsed["ip_address"]
     else:
+        # Pull the clean "WIFI" format out of the parser dictionary context
+        raw_connectivity = parsed.get("connectivity", "WIFI")
+        if str(raw_connectivity).strip().lower() in ["wi-fi", "wifi", "wi_fi", "wi-fi"]:
+            db_ready_connectivity = "WIFI"
+        else:
+            db_ready_connectivity = str(raw_connectivity).upper()
+
         staged_device = DiscoveredDevice(
             device_id=generate_activation_token(prefix="dev_qr"),
             serial_number=identifier if parsed["type"] == "serial" else None,
             mac_address=identifier if parsed["type"] == "mac" else None,
             activation_token=activation_token,
             last_known_ip=parsed["ip_address"],
+            # Injecting the exact string the database demands
+            connectivity=db_ready_connectivity, 
             staging_status=StagingStatus.VALIDATED
         )
         db.add(staged_device)
@@ -288,10 +273,7 @@ async def validate_third_party_qr(
         channel=parsed["channel"] or 1,
         custom_stream_path=parsed["custom_stream_path"],
         protocol=schemas.ConnectionProtocol.RTSP if parsed["protocol"] is None else parsed["protocol"]
- )
-
-
-
+    )
 """# ==========================================
 # 2. DEVICE PAIRING
 # ==========================================

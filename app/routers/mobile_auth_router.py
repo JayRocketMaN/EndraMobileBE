@@ -7,6 +7,7 @@ from sqlalchemy.future import select
 from pwdlib import PasswordHash
 
 from app.core.database import get_db
+from app.core.security import get_current_user
 from app.models.mobile_user_model import MobileUser, EmergencyContact
 from app.schemas.mobile_user_schema import (
     MobileUserRegisterSchema,
@@ -26,6 +27,7 @@ from app.schemas.mobile_user_schema import (
     SelectUseCaseRequestSchema,
     CreateEmergencyContactSchema,
     EmergencyContactResponseSchema,
+    UpdateEmergencyContactSchema,
     UpdateAccountSetupStepSchema,
     UpdateAppPermissionsSchema,
     CompleteOnboardingSchema,
@@ -480,15 +482,16 @@ async def select_primary_use_case(
     return user
 
 
-@router.post("/emergency-contacts", response_model=EmergencyContactResponseSchema)
+@router.post("/emergency-contacts", response_model=EmergencyContactResponseSchema, status_code=201)
 async def add_emergency_contact(
     contact: CreateEmergencyContactSchema,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: MobileUser = Depends(get_current_user)  # Assuming auth dependency is used
 ):
     new_contact = EmergencyContact(
         user_id=contact.user_id,
         full_name=contact.full_name,
-        relationship=contact.relationship,
+        relation=contact.relationship,  # Mapped to model's 'relation' column
         phone_number=contact.phone_number,
     )
 
@@ -498,6 +501,59 @@ async def add_emergency_contact(
 
     return new_contact
 
+
+@router.put("/emergency-contacts/{contact_id}", response_model=EmergencyContactResponseSchema)
+async def update_emergency_contact(
+    contact_id: int,
+    contact_update: UpdateEmergencyContactSchema,  # Use your partial update schema
+    db: AsyncSession = Depends(get_db),
+    current_user: MobileUser = Depends(get_current_user)
+):
+    result = await db.execute(
+        select(EmergencyContact).filter(
+            EmergencyContact.id == contact_id, 
+            EmergencyContact.user_id == current_user.id
+        )
+    )
+    db_contact = result.scalars().first()
+    
+    if not db_contact:
+        raise HTTPException(status_code=404, detail="Contact not found")
+
+    update_data = contact_update.model_dump(exclude_unset=True)
+    
+    # If the schema uses 'relationship', map it to 'relation' for the model
+    if "relationship" in update_data:
+        update_data["relation"] = update_data.pop("relationship")
+
+    for key, value in update_data.items():
+        setattr(db_contact, key, value)
+
+    await db.commit()
+    await db.refresh(db_contact)
+    return db_contact
+
+
+@router.delete("/emergency-contacts/{contact_id}", status_code=204)
+async def delete_emergency_contact(
+    contact_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: MobileUser = Depends(get_current_user)
+):
+    result = await db.execute(
+        select(EmergencyContact).filter(
+            EmergencyContact.id == contact_id, 
+            EmergencyContact.user_id == current_user.id
+        )
+    )
+    db_contact = result.scalars().first()
+    
+    if not db_contact:
+        raise HTTPException(status_code=404, detail="Contact not found")
+
+    await db.delete(db_contact)
+    await db.commit()
+    return None
 
 @router.post("/update-setup-step", response_model=MobileUserResponseSchema)
 async def update_account_setup_step(
