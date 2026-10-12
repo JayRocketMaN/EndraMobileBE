@@ -12,7 +12,7 @@ class PropertyTypeEnum(str, enum.Enum):
 
 
 class CreatePropertySchema(BaseModel):
-    user_id: int = Field(..., json_schema_extra={"example": 1})
+    #user_id: int = Field(..., json_schema_extra={"example": 1})
     property_name: str = Field(..., json_schema_extra={"example": "My Home"})
     full_address: str = Field(..., json_schema_extra={"example": "12 Adeola Way, Lekki Phase 1"})
     property_type: PropertyTypeEnum = Field(PropertyTypeEnum.RESIDENTIAL, json_schema_extra={"example": "residential"})
@@ -38,3 +38,10 @@ class PropertyResponseSchema(BaseModel):
 class PropertyListResponseSchema(BaseModel):
     properties: List[PropertyResponseSchema]
     total: int
+
+class UpdatePropertySchema(BaseModel):
+    property_name: Optional[str] = Field(None, json_schema_extra={"example": "Main Residence"})
+    full_address: Optional[str] = Field(None, json_schema_extra={"example": "15 Admiralty Way, Lekki Phase 1"})
+    property_type: Optional[str] = Field(None, json_schema_extra={"example": "Residential"})
+    latitude: Optional[float] = Field(None, json_schema_extra={"example": 6.5244})
+    longitude: Optional[float] = Field(None, json_schema_extra={"example": 3.3792})    

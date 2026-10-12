@@ -491,7 +491,7 @@ async def add_emergency_contact(
     new_contact = EmergencyContact(
         user_id=contact.user_id,
         full_name=contact.full_name,
-        relation=contact.relationship,  # Mapped to model's 'relation' column
+        relation=contact.relation,  # Mapped to model's 'relation' column
         phone_number=contact.phone_number,
     )
 
@@ -502,35 +502,51 @@ async def add_emergency_contact(
     return new_contact
 
 
-@router.put("/emergency-contacts/{contact_id}", response_model=EmergencyContactResponseSchema)
+@router.get("/emergency-contacts", response_model=list[EmergencyContactResponseSchema], tags=["Emergency Contacts"])
+async def get_emergency_contacts(
+    current_user: MobileUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Retrieve all emergency contacts registered under the authenticated user.
+    Requires the `X-User-ID` header for user identification.
+    """
+    result = await db.execute(
+        select(EmergencyContact).where(EmergencyContact.user_id == current_user.id)
+    )
+    contacts = result.scalars().all()
+    return contacts
+
+@router.put("/emergency-contacts/{contact_id}", response_model=EmergencyContactResponseSchema, tags=["Emergency Contacts"])
 async def update_emergency_contact(
     contact_id: int,
-    contact_update: UpdateEmergencyContactSchema,  # Use your partial update schema
-    db: AsyncSession = Depends(get_db),
-    current_user: MobileUser = Depends(get_current_user)
+    contact_update: UpdateEmergencyContactSchema, # Or a dedicated update schema
+    current_user: MobileUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
 ):
+    """
+    Update an existing emergency contact by its ID for the authenticated user.
+    """
+    # 1. Fetch the existing contact ensuring it belongs to the current user
     result = await db.execute(
-        select(EmergencyContact).filter(
-            EmergencyContact.id == contact_id, 
+        select(EmergencyContact).where(
+            EmergencyContact.id == contact_id,
             EmergencyContact.user_id == current_user.id
         )
     )
-    db_contact = result.scalars().first()
+    db_contact = result.scalar_one_or_none()
     
     if not db_contact:
-        raise HTTPException(status_code=404, detail="Contact not found")
+        raise HTTPException(status_code=404, detail="Emergency contact not found.")
 
-    update_data = contact_update.model_dump(exclude_unset=True)
-    
-    # If the schema uses 'relationship', map it to 'relation' for the model
-    if "relationship" in update_data:
-        update_data["relation"] = update_data.pop("relationship")
-
-    for key, value in update_data.items():
-        setattr(db_contact, key, value)
+    # 2. Update fields
+    db_contact.full_name = contact_update.full_name
+    db_contact.relation = contact_update.relation
+    db_contact.phone_number = contact_update.phone_number
 
     await db.commit()
     await db.refresh(db_contact)
+    
     return db_contact
 
 

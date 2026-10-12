@@ -140,12 +140,15 @@ class SelectUseCaseRequestSchema(BaseModel):
     user_id: int = Field(..., json_schema_extra={"example": 1})
     primary_use_case: UseCaseEnum = Field(..., description="Selected protection use case")
 
-
 class CreateEmergencyContactSchema(BaseModel):
-    user_id: int = Field(..., json_schema_extra={"example": 1})
     full_name: str = Field(..., json_schema_extra={"example": "Adaeze Obi"})
     relation: str = Field(..., json_schema_extra={"example": "Mother"})  
     phone_number: str = Field(..., json_schema_extra={"example": "+2348012345678"})
+
+class UpdateEmergencyContactSchema(BaseModel):
+    full_name: Optional[str] = Field(None, json_schema_extra={"example": "Adaeze Obi"})
+    relation: Optional[str] = Field(None, json_schema_extra={"example": "Mother"})
+    phone_number: Optional[str] = Field(None, json_schema_extra={"example": "+2348012345678"})
 
 
 class EmergencyContactResponseSchema(BaseModel):
@@ -163,12 +166,6 @@ class EmergencyContactResponseSchema(BaseModel):
 class EmergencyContactListResponseSchema(BaseModel):
     contacts: List[EmergencyContactResponseSchema]
     total: int
-
-class UpdateEmergencyContactSchema(BaseModel):
-    full_name: Optional[str] = Field(None, json_schema_extra={"example": "Adaeze Obi"})
-    relationship: Optional[str] = Field(None, json_schema_extra={"example": "Mother"})
-    phone_number: Optional[str] = Field(None, json_schema_extra={"example": "+2348012345678"})    
-
 
 class UpdateAppPermissionsSchema(BaseModel):
     user_id: int = Field(..., json_schema_extra={"example": 1})

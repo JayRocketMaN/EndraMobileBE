@@ -11,12 +11,12 @@ class Base(DeclarativeBase):
     pass
 
 
-# ASYNC ENGINE & SESSION (For FastAPI Routers)
+# ASYNC ENGINE & SESSION (For FastAPI Routers - Configured for PgBouncer)
 async_engine = create_async_engine(
     settings.DATABASE_URL,
     echo=False,
     future=True,
-    poolclass=NullPool,  # Let PgBouncer handle connection pooling
+    poolclass=NullPool,  # Delegates connection pooling entirely to PgBouncer
     connect_args={
         "statement_cache_size": 0,  # Required for PgBouncer compatibility
         "prepared_statement_cache_size": 0,
