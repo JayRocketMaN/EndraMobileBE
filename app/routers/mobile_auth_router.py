@@ -489,7 +489,7 @@ async def add_emergency_contact(
     current_user: MobileUser = Depends(get_current_user)  # Assuming auth dependency is used
 ):
     new_contact = EmergencyContact(
-        user_id=contact.user_id,
+        user_id=current_user.id,
         full_name=contact.full_name,
         relation=contact.relation,  # Mapped to model's 'relation' column
         phone_number=contact.phone_number,
