@@ -118,7 +118,9 @@ class DiscoveredDevice(Base):
 
     # Staged Network & Connection Parameters (Extracted from Full QR or Scan)
     last_known_ip: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    last_known_port: Mapped[int] = mapped_column(Integer, default=554, nullable=False)
+    last_known_port: Mapped[int] = mapped_column(Integer, default=554, nullable=False)  # RTSP streaming port
+    http_port: Mapped[Optional[int]] = mapped_column(Integer, default=80, nullable=True)    # HTTP / ISAPI management port
+    verification_code: Mapped[Optional[str]] = mapped_column(String, nullable=True)       # Hikvision device verification code
     cached_username: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     cached_password: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     cached_custom_path: Mapped[Optional[str]] = mapped_column(String, nullable=True)
@@ -148,7 +150,6 @@ class DiscoveredDevice(Base):
         DateTime(timezone=True), 
         default=lambda: datetime.now(timezone.utc)
     )
-
 
 # ==========================================
 # 3. UNIFIED ACTIVE CAMERA MODEL

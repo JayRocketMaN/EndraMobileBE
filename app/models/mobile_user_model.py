@@ -1,9 +1,10 @@
 import enum
 from datetime import datetime
 from typing import Optional, List
-from sqlalchemy import Integer, String, DateTime, Boolean, ForeignKey, Numeric, Enum as SQLEnum
+from sqlalchemy import Column, Float, Integer, String, DateTime, Boolean, ForeignKey, Numeric, Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship as sqlalchemy_relationship  # <-- Alias to prevent shadowing
 from app.core.database import Base
+
 
 
 class UseCaseEnum(str, enum.Enum):
@@ -92,6 +93,9 @@ class MobileUser(Base):
     transactions: Mapped[List["Transaction"]] = sqlalchemy_relationship(
         "Transaction", back_populates="user", cascade="all, delete-orphan"
     )
+    sos_events: Mapped[List["SOSEvent"]] = sqlalchemy_relationship(
+        "SOSEvent", back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class EmergencyContact(Base):
@@ -110,6 +114,19 @@ class EmergencyContact(Base):
 
     # Relationship back to MobileUser
     user: Mapped["MobileUser"] = sqlalchemy_relationship("MobileUser", back_populates="emergency_contacts")
+
+
+class EmergencyDirectory(Base):
+    __tablename__ = "emergency_directory"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    category: Mapped[str] = mapped_column(String(50)) # e.g., "any_emergency", "police", "fire", "medical"
+    scope: Mapped[str] = mapped_column(String(20)) # "state" or "federal"
+    state_name: Mapped[Optional[str]] = mapped_column(String(50), index=True) # e.g., "Lagos State" or None for federal
+    title: Mapped[str] = mapped_column(String(100)) # e.g., "Lagos State Emergency Response Service"
+    primary_number: Mapped[str] = mapped_column(String(20)) # e.g., "767"
+    secondary_number: Mapped[Optional[str]] = mapped_column(String(20)) # e.g., "112" or landlines
+    description: Mapped[Optional[str]] = mapped_column(String(255))
 
 
 class Transaction(Base):
@@ -139,3 +156,17 @@ class Transaction(Base):
 
     # Relationship back to MobileUser
     user: Mapped["MobileUser"] = sqlalchemy_relationship("MobileUser", back_populates="transactions")
+
+
+
+class SOSEvent(Base):
+    __tablename__ = "sos_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("mobile_users.id", ondelete="CASCADE"), nullable=False, index=True)
+    alert_type = Column(String(50), default="sos_panic") # e.g., 'sos_panic', 'medical', 'fire', 'silent_alarm'
+    latitude = Column(Float, nullable=False)
+    longitude = Column(Float, nullable=False)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

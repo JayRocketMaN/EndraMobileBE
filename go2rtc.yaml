@@ -1,17 +1,17 @@
 api:
-  listen: ":1984" # Listens internally. NOT exposed in docker-compose ports for security.
+  listen: ":1984"
 
 rtsp:
-  listen: ":8554" # Open doorway that catches incoming video pushed up by your edge gateways
+  listen: ":8554"
 
 webrtc:
-  listen: ":8555" # Public doorway used by iOS, Android, and web dashboard canvas players
-  candidates:
-    - stun:://google.com # Resolves asymmetric routing issues dynamically
-    - ${PUBLIC_IP}:8555            # Announces your server's true internet address
+  listen: ":8555"
 
 log:
+  exec: trace 
   level: info
   format: text
 
-streams: {} # Empty by default. Your FastAPI app will populate this using the API.
+streams:
+  cam01:
+    - 'exec:ffmpeg -f gdigrab -framerate 30 -i "title=LetsView [Cast]" -vf "crop=trunc(iw/2)*2:trunc(ih/2)*2" -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p -g 30 -f rtsp {output}'

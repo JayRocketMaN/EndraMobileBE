@@ -681,17 +681,17 @@ async def delete_camera(camera_id: str, db: AsyncSession = Depends(get_db)):
 
 
 # ==========================================
-# 5. STREAM CONTROL ENDPOINTS
+# 5. STREAM CONTROL ENDPOINTS (Updated for String UUIDs)
 # ==========================================
 
 @router.post("/cameras/{camera_id}/start")
-async def start_camera_stream(camera_id: int, rtsp_url: str):
+async def start_camera_stream(camera_id: str, rtsp_url: str):
     pipeline = pipeline_manager.start_camera(camera_id, rtsp_url)
     return {"status": "started", "camera_id": camera_id}
 
 
 @router.get("/cameras/{camera_id}/feed")
-async def stream_camera_feed(camera_id: int):
+async def stream_camera_feed(camera_id: str):
     pipeline = pipeline_manager.get_pipeline(camera_id)
     if not pipeline or not pipeline._is_running:
         raise HTTPException(status_code=404, detail="Camera pipeline not active")
@@ -703,8 +703,6 @@ async def stream_camera_feed(camera_id: int):
 
 
 @router.post("/cameras/{camera_id}/stop")
-async def stop_camera_stream(camera_id: int):
+async def stop_camera_stream(camera_id: str):
     success = pipeline_manager.stop_camera(camera_id)
     return {"status": "stopped" if success else "not_found", "camera_id": camera_id}
-
-

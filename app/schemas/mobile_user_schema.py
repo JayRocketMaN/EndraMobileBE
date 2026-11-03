@@ -167,6 +167,28 @@ class EmergencyContactListResponseSchema(BaseModel):
     contacts: List[EmergencyContactResponseSchema]
     total: int
 
+class EmergencyContactItem(BaseModel):
+    name: str = Field(..., example="Emergency Services")
+    phone_number: str = Field(..., example="112")
+    relation: str = Field(..., example="National Emergency")
+    source: str = Field(..., example="default") # e.g., 'default', 'state', 'personal'
+
+class SOSContactsResponseSchema(BaseModel):
+    national_emergency: List[EmergencyContactItem]
+    state_emergency: List[EmergencyContactItem]
+    personal_emergency_contacts: List[EmergencyContactItem]
+
+
+class SOSTriggerRequest(BaseModel):
+    alert_type: Optional[str] = "sos_panic"
+    latitude: float
+    longitude: float
+
+class LocationUpdateSchema(BaseModel):
+    latitude: float
+    longitude: float    
+
+
 class UpdateAppPermissionsSchema(BaseModel):
     user_id: int = Field(..., json_schema_extra={"example": 1})
     location_permission_granted: bool = Field(False, json_schema_extra={"example": True})

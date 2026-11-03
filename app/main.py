@@ -26,6 +26,8 @@ from app.models.property_model import Property
 from app.routers import (
     dashboard_router,
     hardware_router,
+    hikivision_router,
+    sos_router,
     message_router,
     mobile_auth_router,
     profile_plan_router,
@@ -154,11 +156,13 @@ app.openapi = custom_openapi
 # ==========================================
 app.include_router(mobile_auth_router.router)
 app.include_router(property_router.router)
-app.include_router(hardware_router.router)    
+app.include_router(hardware_router.router)
+app.include_router(sos_router.router)    
 app.include_router(websocket_router.router)
 app.include_router(dashboard_router.router)
 app.include_router(message_router.router)
 app.include_router(profile_plan_router.router)
+app.include_router(hikivision_router.router)
 
 
 @app.get("/", tags=["Health Check"])

@@ -112,3 +112,36 @@ async def camera_websocket_endpoint(websocket: WebSocket, camera_id: str):
     except Exception as e:
         manager.disconnect(camera_id, websocket)
         print(f"WebSocket error on camera {camera_id}: {str(e)}")
+
+
+
+@router.websocket("/ingest")
+async def pipeline_telemetry_ingest(websocket: WebSocket):
+    """
+    WebSocket endpoint for the active VideoPipeline background thread 
+    to push analytics, bounding boxes, and security events.
+    """
+    await websocket.accept()
+    try:
+        while True:
+            raw_data = await websocket.receive_text()
+            data = json.loads(raw_data)
+            
+            event_type = data.get("event_type")
+            payload = data.get("payload", {})
+            camera_id = str(payload.get("camera_id", "1"))
+            
+            # Broadcast the pipeline event (e.g. MONITOR_DEVICE_UPDATE, LAYER2_VLM_TRIGGER) 
+            # to all Flutter / Next.js clients viewing this camera!
+            await manager.broadcast_to_camera(camera_id, {
+                "event_type": event_type,
+                "payload": payload
+            })
+            
+    except WebSocketDisconnect:
+        print("Pipeline telemetry publisher disconnected.")
+    except Exception as e:
+        print(f"Telemetry ingestion error: {str(e)}")
+
+
+

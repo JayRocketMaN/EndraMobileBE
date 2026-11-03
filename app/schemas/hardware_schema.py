@@ -226,3 +226,36 @@ class ConnectionValidationResponse(BaseModel):
     message: str
     constructed_stream_url: str
     camera: Optional[CameraResponse] = None
+
+
+# ==========================================
+# HIKVISION SPECIFIC SCHEMAS
+# ==========================================
+
+class HikvisionDiscoveryResponse(BaseModel):
+    ip_address: str
+    port: int = 80
+    rtsp_port: int = 554
+    serial_number: Optional[str] = None
+    mac_address: Optional[str] = None
+    model: Optional[str] = None
+    firmware_version: Optional[str] = None
+    status: str = "discovered"
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class HikvisionQRRequest(BaseModel):
+    qr_payload: str = Field(..., description="Raw string scanned from the Hikvision physical device QR sticker")
+
+
+class HikvisionQRValidationResponse(BaseModel):
+    status: str = "validated"
+    activation_token: str
+    serial_number: str
+    mac_address: Optional[str] = None
+    suggested_ip: Optional[str] = None
+    model: Optional[str] = None
+    can_auto_pair: bool = False
+
+    model_config = ConfigDict(from_attributes=True)   
