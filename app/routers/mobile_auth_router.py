@@ -40,8 +40,6 @@ router = APIRouter(prefix="/api/v1/mobile/auth", tags=["Mobile Auth"])
 # Initialize pwdlib with recommended password hashing settings
 password_hash = PasswordHash.recommended()
 
-# Development Toggle for OTP Verification (reads from settings/.env)
-USE_HARDCODED_OTP = getattr(settings, "USE_HARDCODED_OTP", True)
 STATIC_TEST_OTP = "123456"
 
 # ==========================================
@@ -72,7 +70,7 @@ async def register_mobile_user(
                 detail="Mobile user with this email already exists."
             )
 
-    # FIX: Offload CPU-heavy hashing to threadpool to avoid event loop stalls
+    # Offload CPU-heavy hashing to threadpool to avoid event loop stalls
     hashed_pwd = await run_in_threadpool(password_hash.hash, payload.password)
 
     new_user = MobileUser(
@@ -149,7 +147,7 @@ async def send_phone_otp(
         )
 
     # Dynamically check settings on every request
-    use_hardcoded = getattr(settings, "USE_HARDCODED_OTP", True)
+    use_hardcoded = getattr(settings, "USE_HARDCODED_OTP", False)
 
     otp = STATIC_TEST_OTP if use_hardcoded else f"{random.randint(100000, 999999)}"
     
@@ -159,7 +157,6 @@ async def send_phone_otp(
 
     # Dispatch via Sling SMS service if hardcoded mode is disabled
     if not use_hardcoded:
-        # Pass phone number and otp_code directly to match SMSService.send_otp_sms definition
         sms_sent = await SMSService.send_otp_sms(
             to_phone_number=payload.phone_number, 
             otp_code=otp
@@ -193,7 +190,8 @@ async def verify_phone_otp(
             detail="User not found."
         )
 
-    is_dev_otp = USE_HARDCODED_OTP and payload.otp_code == STATIC_TEST_OTP
+    use_hardcoded = getattr(settings, "USE_HARDCODED_OTP", False)
+    is_dev_otp = use_hardcoded and payload.otp_code == STATIC_TEST_OTP
     is_db_otp = user.phone_otp_code and user.phone_otp_code == payload.otp_code
 
     if not (is_dev_otp or is_db_otp):
@@ -239,7 +237,8 @@ async def send_email_otp(
             detail="User with this email not found."
         )
 
-    otp = STATIC_TEST_OTP if USE_HARDCODED_OTP else f"{random.randint(100000, 999999)}"
+    use_hardcoded = getattr(settings, "USE_HARDCODED_OTP", False)
+    otp = STATIC_TEST_OTP if use_hardcoded else f"{random.randint(100000, 999999)}"
     
     user.email_otp_code = otp
     user.email_otp_expires_at = datetime.utcnow() + timedelta(minutes=10)
@@ -268,7 +267,8 @@ async def verify_email_otp(
             detail="User not found."
         )
 
-    is_dev_otp = USE_HARDCODED_OTP and payload.otp_code == STATIC_TEST_OTP
+    use_hardcoded = getattr(settings, "USE_HARDCODED_OTP", False)
+    is_dev_otp = use_hardcoded and payload.otp_code == STATIC_TEST_OTP
     is_db_otp = user.email_otp_code and user.email_otp_code == payload.otp_code
 
     if not (is_dev_otp or is_db_otp):
@@ -320,7 +320,6 @@ async def setup_user_pins(
             detail="User not found."
         )
 
-    # FIX: Offload PIN hashing to threadpool
     user.hashed_normal_pin = await run_in_threadpool(password_hash.hash, payload.normal_pin)
     user.hashed_duress_pin = await run_in_threadpool(password_hash.hash, payload.duress_pin)
     user.has_setup_pins = True
@@ -351,7 +350,6 @@ async def verify_sos_cancellation_pin(
             detail="User PINs are not configured."
         )
 
-    # FIX: Offload PIN verification to threadpool
     is_normal = await run_in_threadpool(password_hash.verify, payload.pin_entered, user.hashed_normal_pin)
     if is_normal:
         return ValidateSOSPinResponseSchema(
@@ -390,7 +388,6 @@ async def update_normal_pin(
             detail="User not found or PINs not set up."
         )
 
-    # 1. Verify current normal PIN
     is_current_valid = await run_in_threadpool(
         password_hash.verify, payload.current_pin, user.hashed_normal_pin
     )
@@ -400,7 +397,6 @@ async def update_normal_pin(
             detail="Incorrect current PIN."
         )
 
-    # 2. Ensure new normal PIN does not match existing duress PIN
     if user.hashed_duress_pin:
         is_same_as_duress = await run_in_threadpool(
             password_hash.verify, payload.new_normal_pin, user.hashed_duress_pin
@@ -411,7 +407,6 @@ async def update_normal_pin(
                 detail="Normal PIN cannot be the same as Duress PIN."
             )
 
-    # 3. Update normal PIN
     user.hashed_normal_pin = await run_in_threadpool(
         password_hash.hash, payload.new_normal_pin
     )
@@ -438,7 +433,6 @@ async def update_duress_pin(
             detail="User not found or PINs not set up."
         )
 
-    # 1. Verify current duress PIN (or current normal PIN depending on your security policy)
     is_current_valid = await run_in_threadpool(
         password_hash.verify, payload.current_pin, user.hashed_duress_pin
     )
@@ -448,7 +442,6 @@ async def update_duress_pin(
             detail="Incorrect current PIN."
         )
 
-    # 2. Ensure new duress PIN does not match existing normal PIN
     if user.hashed_normal_pin:
         is_same_as_normal = await run_in_threadpool(
             password_hash.verify, payload.new_duress_pin, user.hashed_normal_pin
@@ -459,7 +452,6 @@ async def update_duress_pin(
                 detail="Duress PIN cannot be the same as Normal PIN."
             )
 
-    # 3. Update duress PIN
     user.hashed_duress_pin = await run_in_threadpool(
         password_hash.hash, payload.new_duress_pin
     )
@@ -503,12 +495,12 @@ async def select_primary_use_case(
 async def add_emergency_contact(
     contact: CreateEmergencyContactSchema,
     db: AsyncSession = Depends(get_db),
-    current_user: MobileUser = Depends(get_current_user)  # Assuming auth dependency is used
+    current_user: MobileUser = Depends(get_current_user)
 ):
     new_contact = EmergencyContact(
         user_id=current_user.id,
         full_name=contact.full_name,
-        relation=contact.relation,  # Mapped to model's 'relation' column
+        relation=contact.relation,
         phone_number=contact.phone_number,
     )
 
@@ -524,10 +516,6 @@ async def get_emergency_contacts(
     current_user: MobileUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Retrieve all emergency contacts registered under the authenticated user.
-    Requires the `X-User-ID` header for user identification.
-    """
     result = await db.execute(
         select(EmergencyContact).where(EmergencyContact.user_id == current_user.id)
     )
@@ -537,14 +525,10 @@ async def get_emergency_contacts(
 @router.put("/emergency-contacts/{contact_id}", response_model=EmergencyContactResponseSchema, tags=["Emergency Contacts"])
 async def update_emergency_contact(
     contact_id: int,
-    contact_update: UpdateEmergencyContactSchema, # Or a dedicated update schema
+    contact_update: UpdateEmergencyContactSchema,
     current_user: MobileUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Update an existing emergency contact by its ID for the authenticated user.
-    """
-    # 1. Fetch the existing contact ensuring it belongs to the current user
     result = await db.execute(
         select(EmergencyContact).where(
             EmergencyContact.id == contact_id,
@@ -556,7 +540,6 @@ async def update_emergency_contact(
     if not db_contact:
         raise HTTPException(status_code=404, detail="Emergency contact not found.")
 
-    # 2. Update fields
     db_contact.full_name = contact_update.full_name
     db_contact.relation = contact_update.relation
     db_contact.phone_number = contact_update.phone_number
@@ -679,9 +662,6 @@ async def logout_mobile_user(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found."
         )
-
-    # Optional backend session/token invalidation logic can go here 
-    # (e.g., deleting push tokens or clearing session entries)
 
     return LogoutResponseSchema(
         message="Logged out successfully.",

@@ -27,6 +27,7 @@ from app.routers import (
     dashboard_router,
     hardware_router,
     hikivision_router,
+    mock_hikivision_cam,
     sos_router,
     message_router,
     mobile_auth_router,
@@ -163,6 +164,7 @@ app.include_router(dashboard_router.router)
 app.include_router(message_router.router)
 app.include_router(profile_plan_router.router)
 app.include_router(hikivision_router.router)
+app.include_router(mock_hikivision_cam.router)
 
 
 @app.get("/", tags=["Health Check"])
