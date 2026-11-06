@@ -83,3 +83,17 @@ async def get_current_user(
         )
         
     return user
+
+# =====================================================================
+# PASSWORD HASH COMPATIBILITY WRAPPER
+# =====================================================================
+class PasswordHashWrapper:
+    @staticmethod
+    def hash(password: str) -> str:
+        return hash_password(password)
+
+    @staticmethod
+    def verify(plain_password: str, hashed_password: str) -> bool:
+        return verify_password(plain_password, hashed_password)
+
+password_hash = PasswordHashWrapper()

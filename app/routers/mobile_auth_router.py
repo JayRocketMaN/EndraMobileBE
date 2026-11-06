@@ -7,7 +7,9 @@ from sqlalchemy.future import select
 from pwdlib import PasswordHash
 
 from app.core.database import get_db
+from app.core.config import settings
 from app.core.security import get_current_user
+from app.services.sms_service import SMSService
 from app.models.mobile_user_model import MobileUser, EmergencyContact
 from app.schemas.mobile_user_schema import (
     MobileUserRegisterSchema,
@@ -38,10 +40,9 @@ router = APIRouter(prefix="/api/v1/mobile/auth", tags=["Mobile Auth"])
 # Initialize pwdlib with recommended password hashing settings
 password_hash = PasswordHash.recommended()
 
-# Development Toggle for OTP Verification
-USE_HARDCODED_OTP = True
+# Development Toggle for OTP Verification (reads from settings/.env)
+USE_HARDCODED_OTP = getattr(settings, "USE_HARDCODED_OTP", True)
 STATIC_TEST_OTP = "123456"
-
 
 # ==========================================
 # Registration & Authentication
@@ -129,7 +130,7 @@ async def login_mobile_user(
     return user
 
 # ==========================================
-# Phone OTP Endpoints
+# Phone OTP Endpoints (Integrated with Sling SMS)
 # ==========================================
 
 @router.post("/send-phone-otp", response_model=OTPStatusResponseSchema)
@@ -147,19 +148,35 @@ async def send_phone_otp(
             detail="User with this phone number not found."
         )
 
-    otp = STATIC_TEST_OTP if USE_HARDCODED_OTP else f"{random.randint(100000, 999999)}"
+    # Dynamically check settings on every request
+    use_hardcoded = getattr(settings, "USE_HARDCODED_OTP", True)
+
+    otp = STATIC_TEST_OTP if use_hardcoded else f"{random.randint(100000, 999999)}"
     
     user.phone_otp_code = otp
     user.phone_otp_expires_at = datetime.utcnow() + timedelta(minutes=10)
     await db.commit()
 
-    print(f"\n[PHONE OTP] Active Code for {payload.phone_number}: {otp}\n")
+    # Dispatch via Sling SMS service if hardcoded mode is disabled
+    if not use_hardcoded:
+        # Pass phone number and otp_code directly to match SMSService.send_otp_sms definition
+        sms_sent = await SMSService.send_otp_sms(
+            to_phone_number=payload.phone_number, 
+            otp_code=otp
+        )
+        
+        if not sms_sent:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Failed to dispatch OTP SMS via Sling provider."
+            )
+    else:
+        print(f"\n[PHONE OTP - DEV MODE] Active Code for {payload.phone_number}: {otp}\n")
 
     return OTPStatusResponseSchema(
-        message=f"Phone OTP sent successfully. (Dev OTP: {otp})",
+        message="Phone OTP sent successfully.",
         success=True
     )
-
 
 @router.post("/verify-phone-otp", response_model=OTPStatusResponseSchema)
 async def verify_phone_otp(

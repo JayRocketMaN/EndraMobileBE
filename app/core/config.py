@@ -34,6 +34,19 @@ class Settings(BaseSettings):
     ZEPTOMAIL_FROM_EMAIL: str = "noreply@endratech.com"
 
     # ==========================================
+    # Sling SMS Gateway Keys & Configurations
+    # ==========================================
+    SLING_API_TOKEN: Optional[str] = Field(None, json_schema_extra={"example": "sling_live_token_..."})
+    SLING_TRANSACTIONAL_SENDER: str = Field("EMAIN", json_schema_extra={"example": "ENDRA"})
+    SLING_PROMOTIONAL_SENDER: str = Field("ENDRA-PROMO", json_schema_extra={"example": "ENDRA-PROMO"})
+    USE_HARDCODED_OTP: bool = Field(True, json_schema_extra={"example": True})
+
+    # ==========================================
+    # Google Maps Integration API Key
+    # ==========================================
+    GOOGLE_MAPS_API_KEY: Optional[str] = Field(None, json_schema_extra={"example": "AIzaSy..."})
+
+    # ==========================================
     # Squad by GTCO Payment Gateway
     # ==========================================
     SQUAD_ENV: str = Field("sandbox", json_schema_extra={"example": "sandbox"})

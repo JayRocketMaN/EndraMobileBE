@@ -162,11 +162,14 @@ class Transaction(Base):
 class SOSEvent(Base):
     __tablename__ = "sos_events"
 
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("mobile_users.id", ondelete="CASCADE"), nullable=False, index=True)
-    alert_type = Column(String(50), default="sos_panic") # e.g., 'sos_panic', 'medical', 'fire', 'silent_alarm'
-    latitude = Column(Float, nullable=False)
-    longitude = Column(Float, nullable=False)
-    is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("mobile_users.id", ondelete="CASCADE"), nullable=False, index=True)
+    alert_type: Mapped[str] = mapped_column(String(50), default="sos_panic") # e.g., 'sos_panic', 'medical', 'fire', 'silent_alarm'
+    latitude: Mapped[float] = mapped_column(Float, nullable=False)
+    longitude: Mapped[float] = mapped_column(Float, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)    
+    #to flag covert duress cancellations
+    is_under_duress: Mapped[bool] = mapped_column(Boolean, default=False)    
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    user: Mapped["MobileUser"] = sqlalchemy_relationship("MobileUser", back_populates="sos_events")

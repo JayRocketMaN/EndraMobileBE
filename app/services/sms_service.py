@@ -1,60 +1,58 @@
-import httpx
 import logging
-import base64
+import httpx
 from app.core.config import settings
 
 logger = logging.getLogger("endra_sms_service")
 
 
 class SMSService:
+    SLING_BASE_URL = "https://app.sling.com.ng/api/v1/send-sms"
+
     @staticmethod
     async def send_otp_sms(to_phone_number: str, otp_code: str) -> bool:
-        """
-        Asynchronously dispatches a 6-digit OTP code via Twilio SMS API.
-        """
-        # Twilio API Endpoint
-        twilio_url = f"https://api.twilio.com/2010-04-01/Accounts/{settings.TWILIO_ACCOUNT_SID}/Messages.json"
-        
-        # Form-encoded payload expected by Twilio API
+        """Dispatches a 6-digit OTP using the Transactional Sender ID."""
+        body_text = f"Your ENDRA Security verification code is: {otp_code}. Valid for 10 minutes."
+        return await SMSService._dispatch_sling_sms(
+            to_phone_number, body_text, sender=settings.SLING_TRANSACTIONAL_SENDER
+        )
+
+    @staticmethod
+    async def send_sos_alert_sms(to_phone_number: str, custom_message: str) -> bool:
+        """Dispatches an emergency SOS alert using the Transactional Sender ID (priority delivery)."""
+        return await SMSService._dispatch_sling_sms(
+            to_phone_number, custom_message, sender=settings.SLING_TRANSACTIONAL_SENDER
+        )
+
+    @staticmethod
+    async def _dispatch_sling_sms(to_phone_number: str, body_text: str, sender: str) -> bool:
         payload = {
-            "To": to_phone_number,
-            "From": settings.TWILIO_PHONE_NUMBER,
-            "Body": f"Your ENDRA Security verification code is: {otp_code}. Valid for 10 minutes."
+            "to": to_phone_number,
+            "message": body_text,
+            "sender": sender,
         }
-        
-        # HTTP Basic Authentication header (Account SID + Auth Token)
-        auth_string = f"{settings.TWILIO_ACCOUNT_SID}:{settings.TWILIO_AUTH_TOKEN}"
-        encoded_auth = base64.b64encode(auth_string.encode("utf-8")).decode("utf-8")
-        
+
         headers = {
-            "Authorization": f"Basic {encoded_auth}",
-            "Content-Type": "application/x-www-form-urlencoded"
+            "Authorization": f"Bearer {settings.SLING_API_TOKEN}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
         }
 
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    twilio_url,
-                    data=payload,
+                    SMSService.SLING_BASE_URL,
+                    json=payload,
                     headers=headers,
-                    timeout=10.0
+                    timeout=10.0,
                 )
 
-            # --- DEBUG PRINT BLOCK ---
-            print("\n================ TWILIO SMS RAW DEBUG ================")
-            print(f"TARGET PHONE : {to_phone_number}")
-            print(f"OTP CODE     : {otp_code}")
-            print(f"STATUS CODE  : {response.status_code}")
-            print(f"RAW BODY     : {response.text}")
-            print("======================================================\n")
-
-            if response.status_code in (200, 201):
-                logger.info(f"OTP SMS dispatched successfully to {to_phone_number}")
+            if response.status_code == 200:
+                logger.info(f"Sling SMS dispatched successfully to {to_phone_number} using sender {sender}")
                 return True
             else:
-                logger.error(f"Twilio SMS Error: Status {response.status_code} - Payload: {response.text}")
+                logger.error(f"Sling SMS Error: Status {response.status_code} | Payload: {response.text}")
                 return False
 
         except Exception as e:
-            logger.error(f"Failed to transmit SMS payload down external pipe: {str(e)}")
+            logger.error(f"Failed to transmit SMS via Sling API: {str(e)}")
             return False

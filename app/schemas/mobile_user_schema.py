@@ -186,9 +186,45 @@ class SOSTriggerRequest(BaseModel):
 
 class LocationUpdateSchema(BaseModel):
     latitude: float
-    longitude: float    
+    longitude: float
+
+# Request schema for canceling an active SOS event (using "pin")
+class SOSCancelRequestSchema(BaseModel):
+    pin: str = Field(..., min_length=4, max_length=4, json_schema_extra={"example": "1234"})
 
 
+# Comprehensive response schema for the cancellation route
+class SOSCancelResponseSchema(BaseModel):
+    status: str = Field(..., json_schema_extra={"example": "success"})
+    message: str = Field(..., json_schema_extra={"example": "SOS alert cancelled successfully."})
+    is_duress: bool = Field(False, description="True if cancelled using Duress PIN (for backend/client tracking)")
+
+# Serialization schema for SOSEvent model instances
+class SOSEventResponseSchema(BaseModel):
+    id: int
+    user_id: int
+    alert_type: str
+    latitude: float
+    longitude: float
+    is_active: bool
+    is_under_duress: bool = False
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# Schema for WebSocket broadcast payloads
+class SOSWebSocketBroadcastSchema(BaseModel):
+    event_type: str = Field(..., json_schema_extra={"example": "location_update"}) # 'location_update' | 'sos_cancelled' | 'duress_cancellation_intercepted'
+    event_id: int
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    status: Optional[str] = None
+    is_under_duress: bool = False
+    message: Optional[str] = None
+    
 class UpdateAppPermissionsSchema(BaseModel):
     user_id: int = Field(..., json_schema_extra={"example": 1})
     location_permission_granted: bool = Field(False, json_schema_extra={"example": True})
