@@ -9,9 +9,11 @@ from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from app.core.database import get_db, get_current_user
+from app.core.database import get_db 
+from app.core.security import get_current_user
 from app.services.video_pipeline import pipeline_manager
-from app.models.hardware_model import User, Camera, DiscoveredDevice, CameraStatus, StagingStatus, OnboardingMethod, ConnectionProtocol
+from app.models.hardware_model import Camera, DiscoveredDevice, CameraStatus, StagingStatus, OnboardingMethod, ConnectionProtocol
+from app.models.mobile_user_model import MobileUser
 import app.schemas.hardware_schema as schemas
 
 # Initialize router for Hikvision specific endpoints
@@ -52,7 +54,7 @@ def verify_rtsp_credentials(rtsp_url: str, timeout_ms: int = 3000) -> bool:
 async def register_hikvision_camera_manually(
     payload: schemas.ManualCameraSetupRequest, 
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)  # 1. Injected authenticated user
+    current_user: MobileUser = Depends(get_current_user)  # 1. Injected authenticated user
 ):
     """
     Manually add a Hikvision camera using IP coordinates, 
