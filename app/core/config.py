@@ -39,8 +39,7 @@ class Settings(BaseSettings):
     SLING_API_TOKEN: Optional[str] = Field(None, json_schema_extra={"example": "sling_live_token_..."})
     SLING_TRANSACTIONAL_SENDER: str = Field("EMAIN", json_schema_extra={"example": "ENDRA"})
     SLING_PROMOTIONAL_SENDER: str = Field("ENDRA-PROMO", json_schema_extra={"example": "ENDRA-PROMO"})
-    USE_HARDCODED_OTP: bool = Field(True, json_schema_extra={"example": True})
-
+    USE_HARDCODED_OTP: bool = Field(False, json_schema_extra={"example": False})
     # ==========================================
     # Google Maps Integration API Key
     # ==========================================

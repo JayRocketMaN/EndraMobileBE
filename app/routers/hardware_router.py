@@ -11,9 +11,9 @@ from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from app.core.database import get_db
+from app.core.database import get_db, get_current_active_user
 from app.services.video_pipeline import pipeline_manager
-from app.models.hardware_model import Camera, DiscoveredDevice, CameraStatus, StagingStatus, OnboardingMethod, ConnectionProtocol
+from app.models.hardware_model import User, Camera, DiscoveredDevice, CameraStatus, StagingStatus, OnboardingMethod, ConnectionProtocol
 import app.schemas.hardware_schema as schemas
 
 # Initialize a SINGLE router instance for all hardware endpoints
@@ -590,17 +590,19 @@ async def manual_camera_setup(
 # 4. UNIFIED CAMERA CRUD & AGGREGATION
 # ==========================================
 @router.get("/cameras", response_model=List[schemas.CameraResponse])
-async def list_all_cameras(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Camera))
+async def list_all_cameras(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Returns cameras belonging to the authenticated user. 
+    Returns an empty array [] with 200 OK if none exist.
+    """
+    # Filter by user to ensure tenant isolation, returning their inventory list
+    result = await db.execute(select(Camera).filter(Camera.owner_id == current_user.id))
     cameras = result.scalars().all()
     
-    # Check if the query returned no cameras
-    if not cameras:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No camera attached to this account yet."
-        )
-        
+    # Removed the 404 block so it cleanly returns an empty list [] for clear UI handling
     return cameras
 
 

@@ -9,9 +9,9 @@ from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from app.core.database import get_db
+from app.core.database import get_db, get_current_active_user
 from app.services.video_pipeline import pipeline_manager
-from app.models.hardware_model import Camera, DiscoveredDevice, CameraStatus, StagingStatus, OnboardingMethod, ConnectionProtocol
+from app.models.hardware_model import User, Camera, DiscoveredDevice, CameraStatus, StagingStatus, OnboardingMethod, ConnectionProtocol
 import app.schemas.hardware_schema as schemas
 
 # Initialize router for Hikvision specific endpoints
@@ -48,15 +48,15 @@ def verify_rtsp_credentials(rtsp_url: str, timeout_ms: int = 3000) -> bool:
 # ==========================================
 # 1. MANUAL ENTRY METHOD VIA HIKVISION ISAPI
 # ==========================================
-
 @router.post("/manual", response_model=schemas.ConnectionValidationResponse, status_code=status.HTTP_201_CREATED)
 async def register_hikvision_camera_manually(
     payload: schemas.ManualCameraSetupRequest, 
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)  # 1. Injected authenticated user
 ):
     """
     Manually add a Hikvision camera using IP coordinates, 
-    verify via ISAPI endpoint (/ISAPI/System/deviceInfo), and register stream.
+    verify via ISAPI endpoint (/ISAPI/System/deviceInfo), associate with user, and register stream.
     """
     ip = payload.ip_address
     http_port = payload.port or 80
@@ -95,13 +95,13 @@ async def register_hikvision_camera_manually(
         except httpx.RequestError as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, 
-                detail=f"Network error or timeout reaching Hikvision device at {ip}:{http_port} - {str(e)}"
+                detail=f"Network error or timeout reaching Hikvision device at {ip}:{http_port}: {str(e)}"
             )
 
     # 2. Construct Official Hikvision RTSP Stream URL
     constructed_url = build_hikvision_rtsp_url(ip=ip, port=rtsp_port, username=username, password=password, channel=channel)
 
-    # 3. Persist to Database
+    # 3. Persist to Database with Owner Association
     new_camera = Camera(
         camera_name=payload.device_name,
         serial_number=verified_serial,
@@ -115,7 +115,9 @@ async def register_hikvision_camera_manually(
         stream_url=constructed_url,
         assigned_zone=getattr(payload, "assigned_zone", "Hikvision Zone"),
         status=CameraStatus.ONLINE,
-        is_active=True
+        is_active=True,
+        owner_id=current_user.id,                    # 2. Explicitly bind the owner ID
+        property_id=getattr(payload, "property_id", None)  # Optional property context if provided in payload
     )
     
     db.add(new_camera)
@@ -128,7 +130,6 @@ async def register_hikvision_camera_manually(
         constructed_stream_url=constructed_url,
         camera=schemas.CameraResponse.model_validate(new_camera)
     )
-
 
 # ==========================================
 # 2. QR CODE SCANNING & STAGING
