@@ -11,7 +11,7 @@ from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from app.core.database import get_db, get_current_active_user
+from app.core.database import get_db, get_current_user
 from app.services.video_pipeline import pipeline_manager
 from app.models.hardware_model import User, Camera, DiscoveredDevice, CameraStatus, StagingStatus, OnboardingMethod, ConnectionProtocol
 import app.schemas.hardware_schema as schemas
@@ -592,7 +592,7 @@ async def manual_camera_setup(
 @router.get("/cameras", response_model=List[schemas.CameraResponse])
 async def list_all_cameras(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Returns cameras belonging to the authenticated user. 
