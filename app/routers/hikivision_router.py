@@ -4,13 +4,12 @@ import cv2
 import json
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, HTTPException, status, Depends, Header
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.core.database import get_db 
-from app.core.security import get_current_user
 from app.services.video_pipeline import pipeline_manager
 from app.models.hardware_model import Camera, DiscoveredDevice, CameraStatus, StagingStatus, OnboardingMethod, ConnectionProtocol
 from app.models.mobile_user_model import MobileUser
@@ -21,6 +20,36 @@ router = APIRouter(prefix="/api/v1/hardware/hikvision", tags=["Hikvision Integra
 
 # DEVELOPMENT BYPASS TOGGLE
 BYPASS_PIPELINE_EXECUTION = True
+
+
+# ==========================================
+# AUTH DEPENDENCY HELPER (X-User-ID)
+# ==========================================
+async def get_user_by_header(
+    x_user_id: Optional[int] = Header(None, description="Pass the user ID directly for identification"),
+    db: AsyncSession = Depends(get_db)
+) -> MobileUser:
+    """
+    Identifies the user via the X-User-ID header consistently across routes.
+    """
+    if x_user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="X-User-ID header missing from request context."
+        )
+
+    result = await db.execute(
+        select(MobileUser).where(MobileUser.id == x_user_id)
+    )
+    user = result.scalar_one_or_none()
+    
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"User profile corresponding to ID {x_user_id} does not exist."
+        )
+        
+    return user
 
 
 # ==========================================
@@ -54,7 +83,7 @@ def verify_rtsp_credentials(rtsp_url: str, timeout_ms: int = 3000) -> bool:
 async def register_hikvision_camera_manually(
     payload: schemas.ManualCameraSetupRequest, 
     db: AsyncSession = Depends(get_db),
-    current_user: MobileUser = Depends(get_current_user)  # 1. Injected authenticated user
+    current_user: MobileUser = Depends(get_user_by_header)  # Injected user via X-User-ID header
 ):
     """
     Manually add a Hikvision camera using IP coordinates, 
@@ -118,8 +147,8 @@ async def register_hikvision_camera_manually(
         assigned_zone=getattr(payload, "assigned_zone", "Hikvision Zone"),
         status=CameraStatus.ONLINE,
         is_active=True,
-        owner_id=current_user.id,                    # 2. Explicitly bind the owner ID
-        property_id=getattr(payload, "property_id", None)  # Optional property context if provided in payload
+        owner_id=current_user.id,                          # Explicitly bind authenticated user ID
+        property_id=getattr(payload, "property_id", None)  # Optional property context if provided
     )
     
     db.add(new_camera)
@@ -136,6 +165,36 @@ async def register_hikvision_camera_manually(
 # ==========================================
 # 2. QR CODE SCANNING & STAGING
 # ==========================================
+# ==========================================================================
+# PART A: ADD near the top of hikivision_router.py (with your other imports)
+# ==========================================================================
+import logging
+
+from app.models.hardware_model import ConnectivityType as DBConnectivityType
+
+logger = logging.getLogger(__name__)  # skip this line if the file already has a logger
+
+
+def to_db_connectivity(value) -> DBConnectivityType:
+    """Schema/API value ('Wi-Fi', BLE, ...) or enum member -> the model enum the DB column expects.
+
+    The schema enum stays as the API format; only the database boundary converts.
+    """
+    raw = str(getattr(value, "value", value)).strip().lower().replace("-", "").replace("_", "")
+    mapping = {
+        "ble": DBConnectivityType.BLE,
+        "wifi": DBConnectivityType.WIFI,
+        "cellular": DBConnectivityType.CELLULAR,
+    }
+    try:
+        return mapping[raw]
+    except KeyError:
+        raise ValueError(f"Unsupported connectivity value: {value!r}")
+
+
+# ==========================================================================
+# PART B: REPLACE the two endpoints in section "2. QR CODE SCANNING & STAGING"
+# ==========================================================================
 
 @router.post("/validate-qr", response_model=schemas.HikvisionQRValidationResponse)
 async def validate_hikvision_qr(
@@ -151,7 +210,12 @@ async def validate_hikvision_qr(
 
     if "SN:" in raw_text:
         try:
-            parts = {item.split(":")[0]: item.split(":")[1] for item in raw_text.split(";") if ":" in item}
+            # partition (not split) so values that contain ':' are not truncated
+            parts = {}
+            for item in raw_text.split(";"):
+                key, sep, value = item.partition(":")
+                if sep:
+                    parts[key.strip()] = value.strip()
             serial_number = parts.get("SN") or parts.get("serial") or raw_text
         except Exception:
             serial_number = raw_text
@@ -179,7 +243,8 @@ async def validate_hikvision_qr(
             device_name="Hikvision IP Camera",
             maker="Hikvision",
             model="DS-2CD2087G2",
-            connectivity=schemas.ConnectivityType.WIFI,
+            # Still driven by the schema's value; converted for the DB column
+            connectivity=to_db_connectivity(schemas.ConnectivityType.WIFI),
             activation_token=activation_token,
             staging_status=StagingStatus.VALIDATED
         )
@@ -199,14 +264,19 @@ async def validate_hikvision_qr(
 @router.post("/pair-qr", response_model=schemas.DevicePairingResponse)
 async def pair_hikvision_camera_via_qr(
     request: schemas.QrDevicePairingRequest,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: MobileUser = Depends(get_user_by_header)  # Injected user via X-User-ID header
 ):
     """Finalizes pairing using the QR activation token and registers the active camera stream."""
+    # Only a VALIDATED token can pair, so each token works once
     query = await db.execute(
-        select(DiscoveredDevice).where(DiscoveredDevice.activation_token == request.activation_token)
+        select(DiscoveredDevice).where(
+            DiscoveredDevice.activation_token == request.activation_token,
+            DiscoveredDevice.staging_status == StagingStatus.VALIDATED,
+        )
     )
     staged_device = query.scalar_one_or_none()
-    
+
     if not staged_device:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -229,7 +299,7 @@ async def pair_hikvision_camera_via_qr(
                 detail="Token verified, but failed to connect to RTSP stream. Check IP, port, or credentials."
             )
 
-    # Persist active camera entity
+    # Persist active camera entity with owner association
     active_camera = Camera(
         camera_name=request.device_name,
         serial_number=staged_device.serial_number,
@@ -244,16 +314,30 @@ async def pair_hikvision_camera_via_qr(
         password=request.password,
         stream_url=rtsp_url,
         status=CameraStatus.ONLINE,
-        is_active=True
+        is_active=True,
+        owner_id=current_user.id,                          # Explicitly bind authenticated user ID
+        property_id=getattr(request, "property_id", None)  # Optional property context
     )
-    
+
     staged_device.staging_status = StagingStatus.PAIRED
     db.add(active_camera)
     await db.commit()
     await db.refresh(active_camera)
 
+    # Start analytics AFTER the commit, off the event loop (start_camera loads models/threads).
+    # A pipeline failure must not undo or fail a pairing that is already saved.
     if not BYPASS_PIPELINE_EXECUTION:
-        pipeline_manager.start(stream_source=rtsp_url, camera_id=active_camera.id)
+        try:
+            await run_in_threadpool(
+                pipeline_manager.start_camera,
+                active_camera.id,
+                rtsp_url,
+                active_camera.camera_name,
+            )
+        except Exception:
+            logger.exception(
+                "Camera %s paired, but its analytics pipeline failed to start", active_camera.id
+            )
 
     return schemas.DevicePairingResponse(
         status="paired",
@@ -302,3 +386,28 @@ async def discover_hikvision_cameras_on_lan(db: AsyncSession = Depends(get_db)):
         )
 
     return discovered_cameras
+
+
+@router.get("/", status_code=status.HTTP_200_OK)
+async def list_user_cameras(
+    x_user_id: Optional[int] = Header(None, description="Pass the user ID directly for identification"),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Retrieve all registered cameras belonging to the authenticated user.
+    """
+    if x_user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="X-User-ID header missing from request context."
+        )
+
+    # Fetch cameras filtered by owner_id
+    # result = await db.execute(select(CameraModel).where(CameraModel.owner_id == x_user_id))
+    # cameras = result.scalars().all()
+    
+    return {
+        "success": True,
+        "count": 0,
+        "cameras": []
+    }

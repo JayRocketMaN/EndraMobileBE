@@ -17,3 +17,5 @@ streams:
     - 'exec:ffmpeg -f gdigrab -framerate 30 -i "title=LetsView [Cast]" -vf "crop=trunc(iw/2)*2:trunc(ih/2)*2" -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p -g 30 -f rtsp {output}'
 
   test_cam: exec:ffmpeg -re -f lavfi -i testsrc=size=1280x720:rate=30 -c:v libx264 -pix_fmt yuv420p -preset ultrafast -tune zerolatency -g 30 -f rtsp rtsp://127.0.0.1:8554/test_cam
+  
+  backyard_camera: "rtsp://admin:Buconlodge21@127.0.0.1:554/Streaming/Channels/101"
