@@ -9,10 +9,11 @@ async def test_sling_connection():
     url = "https://app.sling.com.ng/api/v1/send-sms"
     
     payload = {
-        "to": "08155762184",  # Replace with your actual phone number (e.g., format: 2348123456789)
-        "message": "TEST: Sling API integration check for ENDRA mobile backend.",
-        "sender": settings.SLING_SENDER_ID,
-    }
+    "to": "2349035061392",
+    "message": "Your ENDRA verification code is 123456. Expires in 5 minutes.",
+    "sender": "Endratech",
+    "type": "transactional"
+}
 
     headers = {
         "Authorization": f"Bearer {settings.SLING_API_TOKEN}",
@@ -21,7 +22,7 @@ async def test_sling_connection():
     }
 
     print(f"Sending test request to Sling API...")
-    print(f"Sender ID : {settings.SLING_SENDER_ID}")
+    print(f"Sender ID : {settings.SLING_TRANSACTIONAL_SENDER}")
     print(f"Token Prefix: {settings.SLING_API_TOKEN[:6]}...\n")
 
     async with httpx.AsyncClient() as client:

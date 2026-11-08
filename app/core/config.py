@@ -37,9 +37,12 @@ class Settings(BaseSettings):
     # Sling SMS Gateway Keys & Configurations
     # ==========================================
     SLING_API_TOKEN: Optional[str] = Field(None, json_schema_extra={"example": "sling_live_token_..."})
-    SLING_TRANSACTIONAL_SENDER: str = Field("EMAIN", json_schema_extra={"example": "ENDRA"})
-    SLING_PROMOTIONAL_SENDER: str = Field("ENDRA-PROMO", json_schema_extra={"example": "ENDRA-PROMO"})
+    SLING_OTP_SENDER: str = Field("ENDRAtech", json_schema_extra={"example": "ENDRAtech"})
+    SLING_SOS_SENDER: str = Field("EndraSOS", json_schema_extra={"example": "EndraSOS"})
+    SLING_PROMOTIONAL_SENDER: str = Field("Endra", json_schema_extra={"example": "Endra"})
     USE_HARDCODED_OTP: bool = Field(False, json_schema_extra={"example": False})
+    # ==========================================
+
     # ==========================================
     # Google Maps Integration API Key
     # ==========================================
