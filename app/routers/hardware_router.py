@@ -591,21 +591,20 @@ async def manual_camera_setup(
 # ==========================================
 # 4. UNIFIED CAMERA CRUD & AGGREGATION
 # ==========================================
-@router.get("/cameras", response_model=List[schemas.CameraResponse])
+@router.get("/cameras", response_model=schemas.CameraListResponse, status_code=status.HTTP_200_OK)
 async def list_all_cameras(
     db: AsyncSession = Depends(get_db),
     current_user: MobileUser = Depends(get_current_user)
 ):
-    """
-    Returns cameras belonging to the authenticated user. 
-    Returns an empty array [] with 200 OK if none exist.
-    """
-    # Filter by user to ensure tenant isolation, returning their inventory list
     result = await db.execute(select(Camera).filter(Camera.owner_id == current_user.id))
     cameras = result.scalars().all()
     
-    # Removed the 404 block so it cleanly returns an empty list [] for clear UI handling
-    return cameras
+    # FastAPI and Pydantic will now automatically validate and serialize the list!
+    return {
+        "success": True,
+        "count": len(cameras),
+        "cameras": cameras
+    }
 
 
 @router.get("/cameras/{camera_id}", response_model=schemas.CameraResponse)

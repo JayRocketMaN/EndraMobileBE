@@ -54,12 +54,29 @@ manager = ConnectionManager()
 async def camera_websocket_endpoint(
     websocket: WebSocket, 
     camera_id: str,
-    user_id: int | None = Query(default=None, description="Optional user ID for session tracking")
 ):
     """
     WebSocket endpoint for WebRTC SDP signaling (Offer/Answer), 
     heartbeat pings, and receiving live AI threat/event feeds for a camera.
+    Requires header: X-User-Id
     """
+    # Extract X-User-Id from connection headers (Starlette normalizes header keys to lowercase)
+    user_id_header = websocket.headers.get("x-user-id") or websocket.headers.get("X-User-Id")
+    
+    if not user_id_header:
+        await websocket.accept()
+        await websocket.send_text(json.dumps({"type": "error", "detail": "Missing X-User-Id header"}))
+        await websocket.close(code=status.WS_4008_POLICY_VIOLATION)
+        return
+
+    try:
+        user_id = int(user_id_header)
+    except ValueError:
+        await websocket.accept()
+        await websocket.send_text(json.dumps({"type": "error", "detail": "Invalid X-User-Id format"}))
+        await websocket.close(code=status.WS_4008_POLICY_VIOLATION)
+        return
+
     await manager.connect(camera_id, websocket)
     logger.info(f"Client connected to camera {camera_id} stream channel (User ID: {user_id})")
     
@@ -75,7 +92,7 @@ async def camera_websocket_endpoint(
 
     try:
         while True:
-            # Receive text frames with a timeout to prevent idle socket drops on Render proxy
+            # Receive text frames with a timeout to prevent idle socket drops on proxy
             raw_data = await websocket.receive_text()
             
             try:
@@ -118,7 +135,7 @@ async def camera_websocket_endpoint(
                     websocket
                 )
 
-            # 3. Heartbeat / Ping-Pong (Keeps Render proxy connection alive past 55s timeout)
+            # 3. Heartbeat / Ping-Pong (Keeps connection alive)
             elif event_type == "ping":
                 await manager.send_personal_message({"type": "pong"}, websocket)
 
@@ -157,7 +174,7 @@ async def pipeline_telemetry_ingest(websocket: WebSocket):
             payload = data.get("payload", {})
             camera_id = str(payload.get("camera_id", "1"))
             
-            # Broadcast the pipeline event to all Flutter / Next.js clients viewing this camera
+            # Broadcast the pipeline event to all connected clients viewing this camera
             await manager.broadcast_to_camera(camera_id, {
                 "event_type": event_type,
                 "payload": payload

@@ -18,10 +18,10 @@ streams:
 
   test_cam: exec:ffmpeg -re -f lavfi -i testsrc=size=1280x720:rate=30 -c:v libx264 -pix_fmt yuv420p -preset ultrafast -tune zerolatency -g 30 -f rtsp rtsp://127.0.0.1:8554/test_cam
   
-  #traffic_camera: ffmpeg:media/evidence/clips/livevid_crash0.mp4 -re -stream_loop -1 -i media/evidence/clips/mov_bbb.mp4 -c copy
+  traffic_camera: ffmpeg:media/evidence/clips/livevid_crash0.mp4 -re -stream_loop -1 -i media/evidence/clips/livevid_crash0.mp4 -c copy
 
   #backyard_camera: ffmpeg:-stream_loop -1 -re -i media/evidence/clips/mov_bbb.mp4 -c copy
 
   #backyard_camera: ffmpeg:media/evidence/clips/mov_bbb.mp4?loop=infinite
-  traffic_cam: exec:ffmpeg -re -stream_loop -1 -i C:/Users/DELL/Documents/endraMobileBE/media/test_videos/traffic_01.mp4 -an -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p -g 30 -f rtsp {output}
+  #traffic_cam: exec:ffmpeg -re -stream_loop -1 -i C:/Users/DELL/Documents/endraMobileBE/media/test_videos/traffic_01.mp4 -an -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p -g 30 -f rtsp {output}
   

@@ -1,17 +1,16 @@
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy import Boolean, DateTime, Enum as SQLEnum, ForeignKey, Integer, String
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 
+if TYPE_CHECKING:
+    from app.models.property_model import Property
 
-# ==========================================
-# 1. SHARED ENUMS
-# ==========================================
 
 # ==========================================
 # 1. SHARED ENUMS
@@ -29,7 +28,6 @@ class CameraStatus(str, Enum):
     AUTHENTICATION_FAILED = "AUTH_FAILED"
     UNREACHABLE = "UNREACHABLE"
 
-    # Backward compatibility alias for "connected" string payloads
     @classmethod
     def _missing_(cls, value):
         if isinstance(value, str):
@@ -43,7 +41,7 @@ class CameraStatus(str, Enum):
 
 class ConnectivityType(str, Enum):
     BLE = "BLE"
-    WIFI = "WIFI"          # Must match the DB value 'WIFI' exactly!
+    WIFI = "WIFI"
     CELLULAR = "CELLULAR"
     
 
@@ -56,17 +54,18 @@ class DeviceType(str, Enum):
 
 
 class StagingStatus(str, Enum):
-    DISCOVERED = "DISCOVERED"  # Discovered via BLE or Wi-Fi scan
-    VALIDATED = "VALIDATED"    # QR code validated & token issued
-    PAIRED = "PAIRED"          # Fully paired to user/property
-    EXPIRED = "EXPIRED"        # Staging session timed out
+    DISCOVERED = "DISCOVERED"
+    VALIDATED = "VALIDATED"
+    PAIRED = "PAIRED"
+    EXPIRED = "EXPIRED"
 
 
 class OnboardingMethod(str, Enum):
     MANUAL = "manual"
     QR_CODE = "qr_code"
     AUTO_DISCOVERY = "auto_discovery"
-# Helper function to serialize Enum values safely to PostgreSQL native ENUMs
+
+
 def enum_values(enum_cls):
     return lambda obj: [e.value for e in obj]
 
@@ -76,17 +75,15 @@ def enum_values(enum_cls):
 # ==========================================
 
 class DiscoveredDevice(Base):
-    """Caches discovered BLE/Wi-Fi devices & staged QR code sessions to allow quick reconnects and auto-pairing."""
     __tablename__ = "discovered_devices"
+    __table_args__ = {'extend_existing': True}
 
-    # Primary Key
     id: Mapped[str] = mapped_column(
         String, 
         primary_key=True, 
         default=lambda: str(uuid.uuid4())
     )
 
-    # Identifiers
     device_id: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
     serial_number: Mapped[Optional[str]] = mapped_column(String, unique=True, index=True, nullable=True)
     mac_address: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
@@ -94,7 +91,6 @@ class DiscoveredDevice(Base):
     maker: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     model: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
-    # Device Categories
     device_type: Mapped[DeviceType] = mapped_column(
         SQLEnum(DeviceType, values_callable=enum_values(DeviceType)), 
         default=DeviceType.CAMERA, 
@@ -107,7 +103,6 @@ class DiscoveredDevice(Base):
     )
     signal_strength_dbm: Mapped[Optional[int]] = mapped_column(Integer, default=-65, nullable=True)
 
-    # Onboarding Staging & Verification
     staging_status: Mapped[StagingStatus] = mapped_column(
         SQLEnum(StagingStatus, values_callable=enum_values(StagingStatus)), 
         default=StagingStatus.DISCOVERED, 
@@ -116,23 +111,27 @@ class DiscoveredDevice(Base):
     activation_token: Mapped[Optional[str]] = mapped_column(String, unique=True, nullable=True)
     can_auto_pair: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
-    # Staged Network & Connection Parameters (Extracted from Full QR or Scan)
     last_known_ip: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    last_known_port: Mapped[int] = mapped_column(Integer, default=554, nullable=False)  # RTSP streaming port
-    http_port: Mapped[Optional[int]] = mapped_column(Integer, default=80, nullable=True)    # HTTP / ISAPI management port
-    verification_code: Mapped[Optional[str]] = mapped_column(String, nullable=True)       # Hikvision device verification code
+    last_known_port: Mapped[int] = mapped_column(Integer, default=554, nullable=False)
+    http_port: Mapped[Optional[int]] = mapped_column(Integer, default=80, nullable=True)
+    verification_code: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     cached_username: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     cached_password: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     cached_custom_path: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     firmware_version: Mapped[Optional[str]] = mapped_column(String, default="v2.1.0-prod", nullable=True)
 
-    # Multi-tenant Scopes
     organization_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     
-    property_id: Mapped[Optional[int]] = mapped_column(
+    # Mandatory property link
+    property_id: Mapped[int] = mapped_column(
         Integer, 
-        ForeignKey("user_properties.id", ondelete="SET NULL"), 
-        nullable=True
+        ForeignKey("user_properties.id", ondelete="CASCADE"), 
+        nullable=False
+    )
+    
+    property: Mapped["Property"] = relationship(
+        "Property", 
+        back_populates="discovered_devices"
     )
     
     discovered_by_user_id: Mapped[Optional[int]] = mapped_column(
@@ -141,7 +140,6 @@ class DiscoveredDevice(Base):
         nullable=True
     )
 
-    # Timestamps
     last_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), 
         default=lambda: datetime.now(timezone.utc)
@@ -151,22 +149,21 @@ class DiscoveredDevice(Base):
         default=lambda: datetime.now(timezone.utc)
     )
 
+
 # ==========================================
 # 3. UNIFIED ACTIVE CAMERA MODEL
 # ==========================================
 
 class Camera(Base):
-    """Stores all active, paired cameras (QR, Auto-Discovered, or Manual) integrated into the VideoPipeline."""
     __tablename__ = "cameras"
+    __table_args__ = {'extend_existing': True}
 
-    # Primary Key
     id: Mapped[str] = mapped_column(
         String, 
         primary_key=True, 
         default=lambda: str(uuid.uuid4())
     )
 
-    # Hardware & Basic Info
     camera_name: Mapped[str] = mapped_column(String, nullable=False)
     mac_address: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
     serial_number: Mapped[Optional[str]] = mapped_column(String, index=True, nullable=True)
@@ -184,20 +181,15 @@ class Camera(Base):
         nullable=False
     )
 
-    # Network Details (Made Optional for pure custom RTSP stream URLs)
     ip_address: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     port: Mapped[int] = mapped_column(Integer, default=554, nullable=False)
     channel: Mapped[Optional[int]] = mapped_column(Integer, default=1, nullable=True)
     custom_stream_path: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
-    # Credentials (Made Optional for unauthenticated RTSP feeds)
     username: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     password: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-
-    # Live Feed URI & Pipeline Config
     stream_url: Mapped[str] = mapped_column(String, nullable=False)
 
-    # System Status & Metadata
     status: Mapped[CameraStatus] = mapped_column(
         SQLEnum(CameraStatus, values_callable=enum_values(CameraStatus)), 
         default=CameraStatus.ONLINE, 
@@ -206,19 +198,24 @@ class Camera(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_ptz: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
-    # Foreign Key Ownership
     owner_id: Mapped[Optional[int]] = mapped_column(
         Integer, 
         ForeignKey("mobile_users.id", ondelete="CASCADE"), 
         nullable=True
     )
-    property_id: Mapped[Optional[int]] = mapped_column(
+    
+    # Mandatory property link enforcing One-to-Many
+    property_id: Mapped[int] = mapped_column(
         Integer, 
-        ForeignKey("user_properties.id", ondelete="SET NULL"), 
-        nullable=True
+        ForeignKey("user_properties.id", ondelete="CASCADE"), 
+        nullable=False
     )
 
-    # Timestamps
+    property: Mapped["Property"] = relationship(
+        "Property", 
+        back_populates="cameras"
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), 
         default=lambda: datetime.now(timezone.utc)

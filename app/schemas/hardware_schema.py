@@ -71,6 +71,7 @@ class DeviceDiscoveryItem(BaseModel):
     mac_address: Optional[str] = Field(None, json_schema_extra={"example": "AA:BB:CC:DD:EE:FF"})
     connectivity: ConnectivityType
     staging_status: StagingStatus = StagingStatus.DISCOVERED
+    property_id: int = Field(..., description="Mandatory property ID link", json_schema_extra={"example": 1})
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -116,6 +117,9 @@ class BaseDevicePairingRequest(BaseModel):
     protocol: Optional[ConnectionProtocol] = ConnectionProtocol.RTSP
     mac_address: Optional[str] = Field(None, example="00:1A:2B:3C:4D:5E")
     serial_number: Optional[str] = Field(None, example="DS-2026-99018")
+    
+    # Enforced mandatory property ID link during pairing
+    property_id: int = Field(..., description="Mandatory property ID link for the camera", example=1)
 
 
 class QrDevicePairingRequest(BaseDevicePairingRequest):
@@ -136,6 +140,7 @@ class DevicePairingResponse(BaseModel):
     device_name: str = Field(..., example="Front Gate Camera")
     assigned_zone: str = Field(..., example="Warehouse Exterior")
     constructed_stream_url: str = Field(..., example="rtsp://admin:Password123@192.168.1.120:554/h264/ch1/main")
+    property_id: int = Field(..., example=1)
     is_online: bool = True
 
 
@@ -154,7 +159,7 @@ class DiscoveredDeviceResponse(BaseModel):
     last_known_port: int
     firmware_version: Optional[str] = None
     organization_id: Optional[str] = None
-    property_id: Optional[int] = None
+    property_id: int  # Enforced mandatory property ID
     last_seen_at: datetime
     created_at: datetime
 
@@ -183,11 +188,19 @@ class CameraResponse(BaseModel):
     is_active: bool
     is_ptz: bool
     owner_id: Optional[int] = None
-    property_id: Optional[int] = None
+    property_id: int  # Mandatory property ID linkage
     created_at: datetime
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class CameraListResponse(BaseModel):
+    success: bool = True
+    count: int
+    cameras: List[CameraResponse]
+
+    model_config = ConfigDict(from_attributes=True)    
 
 
 class ManualCameraSetupRequest(BaseModel):
@@ -199,6 +212,7 @@ class ManualCameraSetupRequest(BaseModel):
     password: Optional[str] = Field(None, json_schema_extra={"example": "password123"})
     stream_url: Optional[str] = Field(None, json_schema_extra={"example": "rtsp://192.168.1.40/live"})
     device_name: str = Field(..., json_schema_extra={"example": "Store Entrance"})
+    property_id: int = Field(..., description="Mandatory property ID link", json_schema_extra={"example": 1})
 
 
 class CameraMetadataUpdateRequest(BaseModel):
@@ -217,6 +231,7 @@ class CameraUpdateRequest(BaseModel):
     password: Optional[str] = Field(None, example="Secret123!")
     custom_stream_path: Optional[str] = Field(None, example="live/ch0")
     assigned_zone: Optional[str] = Field(None, example="Warehouse A")
+    property_id: Optional[int] = Field(None, example=1)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -258,4 +273,4 @@ class HikvisionQRValidationResponse(BaseModel):
     model: Optional[str] = None
     can_auto_pair: bool = False
 
-    model_config = ConfigDict(from_attributes=True)   
+    model_config = ConfigDict(from_attributes=True)

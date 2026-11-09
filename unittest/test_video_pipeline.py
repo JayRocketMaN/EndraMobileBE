@@ -1,18 +1,22 @@
 import asyncio
-from app.services.video_pipeline import VideoPipeline  # Or wherever your file is imported from
-from app.core.database import AsyncSessionLocal
-from sqlalchemy.future import select
-# Import your camera model if needed
+import os
+from app.services.video_pipeline import VideoPipeline
 
 async def start_ai_pipeline():
+    # Set the ingest telemetry WebSocket URL environment variable or pass it 
+    # so the internal pipeline thread knows where to push real-time events.
+    os.environ["TELEMETRY_WS_URL"] = "ws://localhost:8000/api/v1/ws/ingest"
+
     # Instantiate the pipeline object
     pipeline = VideoPipeline()
     
-    # Start the pipeline using the correct .start(...) method signature
+    print("Starting test video pipeline and connecting to backend telemetry...")
+    
+    # Start the pipeline using the correct UUID matching your WebSocket client viewer
     pipeline.start(
-        stream_source="media/evidence/clips/mov_bbb.mp4",
-        camera_id=1,
-        camera_name="Scanned Backyard Camera"
+        stream_source="media/evidence/clips/livevid_crash0.mp4",
+        camera_id="56b08f73-ebda-4b87-9822-3398c74da081",
+        camera_name="Traffic Camera"
     )
 
 if __name__ == "__main__":

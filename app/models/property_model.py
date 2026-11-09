@@ -1,9 +1,12 @@
 import enum
 from datetime import datetime
-from typing import Optional
+from typing import TYPE_CHECKING, List, Optional
 from sqlalchemy import Integer, String, Float, DateTime, ForeignKey, Enum as SQLEnum
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.database import Base
+
+if TYPE_CHECKING:
+    from app.models.hardware_model import Camera, DiscoveredDevice
 
 
 class PropertyTypeEnum(str, enum.Enum):
@@ -15,6 +18,7 @@ class PropertyTypeEnum(str, enum.Enum):
 
 class Property(Base):
     __tablename__ = "user_properties"
+    __table_args__ = {'extend_existing': True}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     user_id: Mapped[int] = mapped_column(
@@ -32,3 +36,16 @@ class Property(Base):
     longitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    # --- Relationships ---
+    cameras: Mapped[List["Camera"]] = relationship(
+        "Camera", 
+        back_populates="property", 
+        cascade="all, delete-orphan"
+    )
+
+    discovered_devices: Mapped[List["DiscoveredDevice"]] = relationship(
+        "DiscoveredDevice", 
+        back_populates="property", 
+        cascade="all, delete-orphan"
+    )

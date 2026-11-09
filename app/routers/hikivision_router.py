@@ -10,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.core.database import get_db 
+from app.core.security import get_current_user
+from app.core.security import get_current_user
 from app.services.video_pipeline import pipeline_manager
 from app.models.hardware_model import Camera, DiscoveredDevice, CameraStatus, StagingStatus, OnboardingMethod, ConnectionProtocol
 from app.models.mobile_user_model import MobileUser
@@ -388,26 +390,3 @@ async def discover_hikvision_cameras_on_lan(db: AsyncSession = Depends(get_db)):
     return discovered_cameras
 
 
-@router.get("/", status_code=status.HTTP_200_OK)
-async def list_user_cameras(
-    x_user_id: Optional[int] = Header(None, description="Pass the user ID directly for identification"),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Retrieve all registered cameras belonging to the authenticated user.
-    """
-    if x_user_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="X-User-ID header missing from request context."
-        )
-
-    # Fetch cameras filtered by owner_id
-    # result = await db.execute(select(CameraModel).where(CameraModel.owner_id == x_user_id))
-    # cameras = result.scalars().all()
-    
-    return {
-        "success": True,
-        "count": 0,
-        "cameras": []
-    }
