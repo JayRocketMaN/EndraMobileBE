@@ -18,9 +18,17 @@ class SMSService:
         )
 
     @staticmethod
-    async def send_sos_alert_sms(to_phone_number: str, user_name: str, location: str = "Green Estate") -> bool:
-        """Dispatches an emergency SOS alert using the EndraSOS Transactional Sender ID (priority delivery)."""
-        body_text = f"SOS Alert: An emergency request has been triggered at {location} by {user_name}. Open ENDRA to view the incident and respond."
+    async def send_sos_alert_sms(
+        to_phone_number: str, 
+        user_name: str, 
+        location: str = "Green Estate", 
+        tracking_link: str = ""
+    ) -> bool:
+        """Dispatches an emergency SOS alert using the EndraSOS Transactional Sender ID with live platform map link."""
+        body_text = (
+            f"SOS Alert: An emergency request has been triggered at {location} by {user_name}. "
+            f"Open ENDRA to view the live map and respond: {tracking_link}"
+        )
         sender_id = getattr(settings, "SLING_SOS_SENDER", "EndraSOS").strip()
         return await SMSService._dispatch_sling_sms(
             to_phone_number, body_text, sender=sender_id

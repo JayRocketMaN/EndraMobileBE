@@ -199,6 +199,16 @@ class SOSCancelResponseSchema(BaseModel):
     message: str = Field(..., json_schema_extra={"example": "SOS alert cancelled successfully."})
     is_duress: bool = Field(False, description="True if cancelled using Duress PIN (for backend/client tracking)")
 
+
+class SOSTriggerResponseSchema(BaseModel):
+    status: str
+    message: str
+    event_id: int
+    resolved_address: str  
+    notified_contacts_count: int
+    tracking_link: str
+
+
 # Serialization schema for SOSEvent model instances
 class SOSEventResponseSchema(BaseModel):
     id: int

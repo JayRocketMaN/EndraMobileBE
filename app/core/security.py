@@ -1,6 +1,6 @@
 from typing import Optional
 from fastapi import Header, HTTPException, status, Depends
-import bcrypt  
+from passlib.context import CryptContext  # ✅ Added Passlib CryptContext for Argon2/Bcrypt support
 from cryptography.fernet import Fernet 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -34,22 +34,18 @@ def decrypt_password(encrypted_text: str) -> str:
 
 
 # =====================================================================
-# CRYPTOGRAPHY & HASHING ENGINE (Native Bcrypt for User Logins)
+# CRYPTOGRAPHY & HASHING ENGINE (Passlib CryptContext for Argon2 & Bcrypt)
 # =====================================================================
+pwd_context = CryptContext(schemes=["argon2", "bcrypt"], deprecated="auto")
+
 def hash_password(password: str) -> str:
-    """Transforms plain text credentials into secure bcrypt hashes natively."""
-    password_bytes = password.encode('utf-8')
-    salt = bcrypt.gensalt()
-    hashed_bytes = bcrypt.hashpw(password_bytes, salt)
-    return hashed_bytes.decode('utf-8')
+    """Transforms plain text credentials into secure argon2 hashes natively."""
+    return pwd_context.hash(password)
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verifies an incoming input matches our database record hash safely."""
+    """Verifies an incoming input matches our database record hash safely (supports Argon2 & Bcrypt)."""
     try:
-        return bcrypt.checkpw(
-            plain_password.encode('utf-8'),
-            hashed_password.encode('utf-8')
-        )
+        return pwd_context.verify(plain_password, hashed_password)
     except Exception:
         return False
 

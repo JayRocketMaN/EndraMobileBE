@@ -7,6 +7,7 @@ from sqlalchemy.future import select
 from pwdlib import PasswordHash
 
 from app.core.database import get_db
+from app.core.security import password_hash
 from app.core.config import settings
 from app.core.security import get_current_user
 from app.services.sms_service import SMSService
@@ -37,8 +38,11 @@ from app.schemas.mobile_user_schema import (
 
 router = APIRouter(prefix="/api/v1/mobile/auth", tags=["Mobile Auth"])
 
-# Initialize pwdlib with recommended password hashing settings
-password_hash = PasswordHash.recommended()
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 
 STATIC_TEST_OTP = "123456"
 
@@ -299,7 +303,7 @@ async def verify_email_otp(
 # PIN Setup & SOS Verification Endpoints
 # ==========================================
 
-@router.post("/setup-pins", response_model=OTPStatusResponseSchema)
+"""@router.post("/setup-pins", response_model=OTPStatusResponseSchema)
 async def setup_user_pins(
     payload: SetUserPinsRequestSchema,
     db: AsyncSession = Depends(get_db)
@@ -332,8 +336,50 @@ async def setup_user_pins(
     return OTPStatusResponseSchema(
         message="Security PINs configured successfully.",
         success=True
-    )
+    )"""
 
+@router.post("/setup-pins", response_model=OTPStatusResponseSchema)
+async def setup_user_pins(
+    payload: SetUserPinsRequestSchema,
+    db: AsyncSession = Depends(get_db)
+):
+    if payload.normal_pin == payload.duress_pin:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Normal PIN and Duress PIN cannot be the same."
+        )
+
+    query = select(MobileUser).where(MobileUser.id == payload.user_id)
+    result = await db.execute(query)
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found."
+        )
+
+    hashed_normal = await run_in_threadpool(password_hash.hash, payload.normal_pin)
+    hashed_duress = await run_in_threadpool(password_hash.hash, payload.duress_pin)
+
+    # 🔍 DEBUG LOGS: Trace generated hashes
+    logger.info(f"--- PIN SETUP DEBUG FOR USER {user.id} ---")
+    logger.info(f"Raw Normal PIN: {payload.normal_pin} | Generated Hash: {hashed_normal}")
+    logger.info(f"Raw Duress PIN: {payload.duress_pin} | Generated Hash: {hashed_duress}")
+
+    user.hashed_normal_pin = hashed_normal
+    user.hashed_duress_pin = hashed_duress
+    user.has_setup_pins = True
+
+    if user.account_setup_step < 2:
+        user.account_setup_step = 2
+
+    await db.commit()
+
+    return OTPStatusResponseSchema(
+        message="Security PINs configured successfully.",
+        success=True
+    )
 
 @router.post("/verify-sos-pin", response_model=ValidateSOSPinResponseSchema)
 async def verify_sos_cancellation_pin(

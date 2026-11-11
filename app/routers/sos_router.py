@@ -1,6 +1,6 @@
 from typing import Dict, List
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -17,13 +17,21 @@ from app.schemas.mobile_user_schema import (
     LocationUpdateSchema,
     SOSContactsResponseSchema,
     SOSTriggerRequest,
+    SOSTriggerResponseSchema,
     SOSCancelRequestSchema,
-    SOSCancelResponseSchema,    
+    SOSCancelResponseSchema,
+    SOSEventResponseSchema,
+    SOSWebSocketBroadcastSchema,
+    ValidateSOSPinResponseSchema,
 )
 from app.services.google_map_service import GoogleMapsService
 from app.services.sms_service import SMSService
 from fastapi.concurrency import run_in_threadpool
 from app.core.security import get_current_user, password_hash
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/sos", tags=["SOS Emergency"])
 
@@ -34,7 +42,6 @@ router = APIRouter(prefix="/api/v1/sos", tags=["SOS Emergency"])
 class SOSConnectionManager:
     """Manages active WebSocket tracking sessions keyed by event_id."""
     def __init__(self):
-        # Maps event_id (int) -> list of connected client WebSockets
         self.active_connections: Dict[int, List[WebSocket]] = {}
 
     async def connect(self, event_id: int, websocket: WebSocket):
@@ -51,20 +58,15 @@ class SOSConnectionManager:
                 del self.active_connections[event_id]
 
     async def broadcast_to_event(self, event_id: int, message: dict):
-        """Broadcasts live location coordinates or status updates to all tracking clients."""
         if event_id in self.active_connections:
             for connection in self.active_connections[event_id]:
                 try:
                     await connection.send_json(message)
                 except Exception:
-                    pass  # Silently handle dropped client sockets
+                    pass
 
 
 sos_ws_manager = SOSConnectionManager()
-
-
-class SOSCancelRequest(BaseModel):
-    pin: str
 
 
 # ==========================================
@@ -139,13 +141,12 @@ async def get_sos_contacts(
 # ==========================================
 # 2. Trigger Active SOS Emergency Alert
 # ==========================================
-@router.post("/trigger")
+@router.post("/trigger", response_model=SOSTriggerResponseSchema)
 async def trigger_sos_alert(
     payload: SOSTriggerRequest,
     db: AsyncSession = Depends(get_db),
     current_user: MobileUser = Depends(get_current_user),
 ):
-    # Log active event
     sos_event = SOSEvent(
         user_id=current_user.id,
         alert_type=payload.alert_type,
@@ -157,21 +158,17 @@ async def trigger_sos_alert(
     await db.commit()
     await db.refresh(sos_event)
 
-    # Reverse geocode address using Google Maps Service
     street_address = await GoogleMapsService.reverse_geocode(
         payload.latitude, payload.longitude
     )
     
-    # Generate public tracking link
+    if not street_address or street_address.strip() == "":
+        street_address = f"Latitude: {payload.latitude}, Longitude: {payload.longitude}"
+
     tracking_link = f"https://app.endra.security/track/live?event_id={sos_event.id}&user={current_user.id}"
 
     user_name = current_user.full_name or "A user"
-    alert_message = (
-        f"EMERGENCY ALERT: {user_name} triggered an {payload.alert_type.upper()} alert near {street_address}! "
-        f"Track live location: {tracking_link}"
-    )
 
-    # Fetch contacts & broadcast via Sling SMS
     contacts_result = await db.execute(
         select(EmergencyContact).where(
             EmergencyContact.user_id == current_user.id
@@ -182,7 +179,12 @@ async def trigger_sos_alert(
     sms_dispatch_count = 0
     for contact in personal_contacts:
         if contact.phone_number:
-            await SMSService.send_sos_alert_sms(contact.phone_number, alert_message)
+            await SMSService.send_sos_alert_sms(
+                to_phone_number=contact.phone_number,
+                user_name=user_name,
+                location=street_address,
+                tracking_link=tracking_link
+            )
             sms_dispatch_count += 1
 
     return {
@@ -222,7 +224,6 @@ async def update_live_location(
     sos_event.longitude = payload.longitude
     await db.commit()
 
-    # Broadcast updated coordinates to all listening map WebSockets
     await sos_ws_manager.broadcast_to_event(
         event_id,
         {
@@ -245,13 +246,8 @@ async def update_live_location(
 # ==========================================
 @router.websocket("/ws/{event_id}")
 async def sos_tracker_websocket(websocket: WebSocket, event_id: int):
-    """
-    WebSocket channel for personal contacts and monitoring dashboards
-    to receive live GPS stream updates for a given event_id.
-    """
     await sos_ws_manager.connect(event_id, websocket)
     
-    # Send initial connection acknowledgment
     await websocket.send_json({
         "event_type": "connected",
         "event_id": event_id,
@@ -260,9 +256,7 @@ async def sos_tracker_websocket(websocket: WebSocket, event_id: int):
 
     try:
         while True:
-            # Keep socket open and process incoming client pings
-            raw = await websocket.receive_text()
-            # Optional ping/pong handling
+            await websocket.receive_text()
     except WebSocketDisconnect:
         sos_ws_manager.disconnect(event_id, websocket)
     except Exception:
@@ -279,22 +273,17 @@ async def cancel_sos_alert(
     db: AsyncSession = Depends(get_db),
     current_user: MobileUser = Depends(get_current_user),
 ):
-    """
-    Terminates or covertly maintains an SOS event depending on whether 
-    the user enters their Normal PIN or their Duress PIN.
-    """
     if not current_user.hashed_normal_pin or not current_user.hashed_duress_pin:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="User security PINs are not configured.",
         )
 
-    # 1. Verify against Normal PIN
+    # Verify normal PIN first
     is_normal = await run_in_threadpool(
         password_hash.verify, payload.pin, current_user.hashed_normal_pin
     )
     
-    # 2. Verify against Duress PIN
     is_duress = False
     if not is_normal:
         is_duress = await run_in_threadpool(
@@ -307,7 +296,6 @@ async def cancel_sos_alert(
             detail="Invalid PIN code.",
         )
 
-    # 3. Fetch the active SOS event
     result = await db.execute(
         select(SOSEvent).where(
             SOSEvent.id == event_id,
@@ -323,13 +311,13 @@ async def cancel_sos_alert(
             detail="Active SOS event not found or already closed.",
         )
 
-    # 4. BRANCH LOGIC: NORMAL VS DURESS
+    tracking_link = f"https://app.endra.security/track/live?event_id={sos_event.id}&user={current_user.id}"
+
     if is_normal:
-        # --- GENUINE CANCELLATION ---
+        # Standard cancellation flow
         sos_event.is_active = False
         await db.commit()
 
-        # Broadcast normal cancellation to tracking maps
         await sos_ws_manager.broadcast_to_event(
             event_id,
             {
@@ -339,30 +327,39 @@ async def cancel_sos_alert(
                 "message": "Emergency event has been safely cancelled by the user.",
             },
         )
-        return {"status": "success", "message": "SOS alert cancelled successfully."}
+        return SOSCancelResponseSchema(
+            status="success",
+            message="SOS alert cancelled successfully.",
+            is_duress=False,
+        )
 
     else:
-        # --- DURESS DECEPTION PROTOCOL ---
-        # Keep the event active in the database for responders, but flag it
-        sos_event.is_under_duress = True  # Make sure to add this boolean column to your SOSEvent model if desired!
+        # Covert duress flow
+        sos_event.is_under_duress = True 
         await db.commit()
 
-        # DISCREET ACTION: Send silent high-priority SMS/Push to security or responders
-        silent_alert_msg = (
-            f"COVERT EMERGENCY: {current_user.full_name} entered their DURESS PIN under threat. "
-            f"The SOS app appears cancelled to the assailant, but the user is still in danger! "
-            f"Track live location: https://app.endra.security/track/live?event_id={sos_event.id}&user={current_user.id}"
+        # Reverse geocode physical location coordinates
+        readable_address = await GoogleMapsService.reverse_geocode(
+            sos_event.latitude, sos_event.longitude
         )
-        
-        # Fetch emergency contacts and dispatch silent warning
+        if not readable_address or readable_address.strip() == "":
+            readable_address = f"Latitude: {sos_event.latitude}, Longitude: {sos_event.longitude}"
+
+        # Combine Duress Warning Header with the Human-Readable Address
+        duress_location = f"Covert Duress Location ({readable_address})"
+
         contacts_result = await db.execute(
             select(EmergencyContact).where(EmergencyContact.user_id == current_user.id)
         )
         for contact in contacts_result.scalars().all():
             if contact.phone_number:
-                await SMSService.send_sos_alert_sms(contact.phone_number, silent_alert_msg)
+                await SMSService.send_sos_alert_sms(
+                    to_phone_number=contact.phone_number,
+                    user_name=current_user.full_name or "A user",
+                    location=duress_location,  # ✅ Emphasizes duress AND shows street address
+                    tracking_link=tracking_link,
+                )
 
-        # Broadcast a special covert event to monitoring dashboards (NOT to public pages)
         await sos_ws_manager.broadcast_to_event(
             event_id,
             {
@@ -370,11 +367,12 @@ async def cancel_sos_alert(
                 "event_id": event_id,
                 "status": "covert_tracking_active",
                 "message": "WARNING: User entered duress PIN. Cancellation is a facade.",
+                "is_under_duress": True,
             },
         )
 
-        # Return a completely normal success response so the attacker thinks it worked!
-        return {
-            "status": "success",
-            "message": "SOS alert cancelled successfully.",
-        }
+        return SOSCancelResponseSchema(
+            status="success",
+            message="SOS alert cancelled successfully.",
+            is_duress=True,
+        )
