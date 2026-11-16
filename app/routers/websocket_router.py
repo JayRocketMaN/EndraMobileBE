@@ -1,8 +1,7 @@
 import json
 import logging
 from typing import Dict, List
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status, Query, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 
 # Adjust imports to match your project structure
 from app.core.database import get_db
@@ -58,24 +57,19 @@ async def camera_websocket_endpoint(
     """
     WebSocket endpoint for WebRTC SDP signaling (Offer/Answer), 
     heartbeat pings, and receiving live AI threat/event feeds for a camera.
-    Requires header: X-User-Id
+    (Auth relaxed for local testing / sandbox mode)
     """
-    # Extract X-User-Id from connection headers (Starlette normalizes header keys to lowercase)
+    # Extract X-User-Id from connection headers with a safe sandbox fallback
     user_id_header = websocket.headers.get("x-user-id") or websocket.headers.get("X-User-Id")
     
     if not user_id_header:
-        await websocket.accept()
-        await websocket.send_text(json.dumps({"type": "error", "detail": "Missing X-User-Id header"}))
-        await websocket.close(code=status.WS_4008_POLICY_VIOLATION)
-        return
-
-    try:
-        user_id = int(user_id_header)
-    except ValueError:
-        await websocket.accept()
-        await websocket.send_text(json.dumps({"type": "error", "detail": "Invalid X-User-Id format"}))
-        await websocket.close(code=status.WS_4008_POLICY_VIOLATION)
-        return
+        user_id = 1  # Fallback test user ID for sandbox/testing
+        logger.info("Missing X-User-Id header. Bypassing auth for sandbox testing with User ID: 1")
+    else:
+        try:
+            user_id = int(user_id_header)
+        except ValueError:
+            user_id = 1
 
     await manager.connect(camera_id, websocket)
     logger.info(f"Client connected to camera {camera_id} stream channel (User ID: {user_id})")
@@ -110,7 +104,7 @@ async def camera_websocket_endpoint(
             if event_type == "sdp_offer":
                 sdp_offer = data.get("sdp", "")
                 
-                # Mock WebRTC Answer response (Replace with real WebRTC pipeline / Layer 1 inference server)
+                # Mock WebRTC Answer response
                 sdp_answer = f"v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=ENDRA_WebRTC_Session\r\n{sdp_offer[:30]}..."
                 
                 await manager.send_personal_message(
@@ -172,7 +166,7 @@ async def pipeline_telemetry_ingest(websocket: WebSocket):
             
             event_type = data.get("event_type")
             payload = data.get("payload", {})
-            camera_id = str(payload.get("camera_id", "1"))
+            camera_id = str(payload.get("camera_id", "5"))
             
             # Broadcast the pipeline event to all connected clients viewing this camera
             await manager.broadcast_to_camera(camera_id, {

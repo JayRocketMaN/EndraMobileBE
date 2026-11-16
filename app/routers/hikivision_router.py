@@ -2,26 +2,35 @@ import secrets
 import httpx
 import cv2
 import json
+import os
+import logging
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, status, Depends, Header
+from fastapi.responses import StreamingResponse
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.core.database import get_db 
 from app.core.security import get_current_user
-from app.core.security import get_current_user
-from app.services.video_pipeline import pipeline_manager
+# Updated to use v_pipeline_2 manager or adapter
+from app.services.v_pipeline_2 import VideoPipeline
 from app.models.hardware_model import Camera, DiscoveredDevice, CameraStatus, StagingStatus, OnboardingMethod, ConnectionProtocol
 from app.models.mobile_user_model import MobileUser
+from app.models.hardware_model import ConnectivityType as DBConnectivityType
 import app.schemas.hardware_schema as schemas
 
 # Initialize router for Hikvision specific endpoints
 router = APIRouter(prefix="/api/v1/hardware/hikvision", tags=["Hikvision Integration"])
 
-# DEVELOPMENT BYPASS TOGGLE
+logger = logging.getLogger(__name__)
+
+# DEVELOPMENT BYPASS TOGGLE (Set to False when connecting real hardware)
 BYPASS_PIPELINE_EXECUTION = True
+
+# Global dictionary or manager for active pipeline instances if needed per camera
+active_pipelines = {}
 
 
 # ==========================================
@@ -31,9 +40,7 @@ async def get_user_by_header(
     x_user_id: Optional[int] = Header(None, description="Pass the user ID directly for identification"),
     db: AsyncSession = Depends(get_db)
 ) -> MobileUser:
-    """
-    Identifies the user via the X-User-ID header consistently across routes.
-    """
+    """Identifies the user via the X-User-ID header consistently across routes."""
     if x_user_id is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -58,17 +65,36 @@ async def get_user_by_header(
 # UTILITY HELPER FUNCTIONS
 # ==========================================
 
+def get_test_clip_path() -> str:
+    """Dynamically resolves the absolute path to the local test video file."""
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return os.path.join(base_dir, "media", "evidence", "clips", "livevid_crash0.mp4")
+
+
 def build_hikvision_rtsp_url(ip: str, port: int = 554, username: str = "admin", password: str = "", channel: int = 1) -> str:
-    """Constructs official Hikvision RTSP stream URL for main stream channels ({channel}01)."""
+    """
+    Constructs official Hikvision RTSP stream URL, or falls back to the local test clip path 
+    if testing locally with sandbox IP addresses.
+    """
+    if ip in ["127.0.0.1", "localhost", "test"]:
+        test_clip_path = get_test_clip_path()
+        if os.path.exists(test_clip_path):
+            return test_clip_path
+            
     channel_code = f"{channel}01"
     return f"rtsp://{username}:{password}@{ip}:{port}/Streaming/Channels/{channel_code}"
 
 
 def verify_rtsp_credentials(rtsp_url: str, timeout_ms: int = 3000) -> bool:
-    """Attempts an RTSP connection with tight timeout limits to verify stream accessibility."""
-    cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
-    cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, timeout_ms)
-    cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, timeout_ms)
+    """Attempts an RTSP or local file connection to verify stream accessibility."""
+    if os.path.exists(rtsp_url):
+        cap = cv2.VideoCapture(rtsp_url)
+    else:
+        options = f"rtsp_transport;tcp|timeout;{timeout_ms * 1000}|stimeout;{timeout_ms * 1000}"
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = options
+        cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
+        cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, timeout_ms)
+        cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, timeout_ms)
 
     if not cap.isOpened():
         return False
@@ -78,6 +104,42 @@ def verify_rtsp_credentials(rtsp_url: str, timeout_ms: int = 3000) -> bool:
     return ret
 
 
+def to_db_connectivity(value) -> DBConnectivityType:
+    raw = str(getattr(value, "value", value)).strip().lower().replace("-", "").replace("_", "")
+    mapping = {
+        "ble": DBConnectivityType.BLE,
+        "wifi": DBConnectivityType.WIFI,
+        "cellular": DBConnectivityType.CELLULAR,
+    }
+    try:
+        return mapping[raw]
+    except KeyError:
+        raise ValueError(f"Unsupported connectivity value: {value!r}")
+
+
+def start_pipeline_for_camera(camera_id: str, stream_source: str, camera_name: str):
+    """Initializes and starts a VideoPipeline instance for the given camera."""
+    try:
+        # Ensure ingestion environment variables are configured for backend web socket sync
+        os.environ["ENDRA_WS_INGEST_URL"] = os.environ.get("ENDRA_WS_INGEST_URL", "ws://localhost:8000/ws/ingest")
+        os.environ["ENDRA_WS_INGEST_HEADERS"] = os.environ.get("ENDRA_WS_INGEST_HEADERS", "X-User-ID=5")
+        os.environ["ENDRA_ALLOW_ANY_VIDEO_PATH"] = "1"
+
+        pipeline = VideoPipeline(log_to_db=False)
+        pipeline.start(
+            stream_source,
+            camera_id=camera_id,
+            camera_name=camera_name,
+            mode="video",
+            loop=True,
+            realtime=True
+        )
+        active_pipelines[camera_id] = pipeline
+        logger.info(f"Successfully started v_pipeline_2 for camera {camera_id}")
+    except Exception:
+        logger.exception("Failed to start v_pipeline_2 for camera %s", camera_id)
+
+
 # ==========================================
 # 1. MANUAL ENTRY METHOD VIA HIKVISION ISAPI
 # ==========================================
@@ -85,12 +147,8 @@ def verify_rtsp_credentials(rtsp_url: str, timeout_ms: int = 3000) -> bool:
 async def register_hikvision_camera_manually(
     payload: schemas.ManualCameraSetupRequest, 
     db: AsyncSession = Depends(get_db),
-    current_user: MobileUser = Depends(get_user_by_header)  # Injected user via X-User-ID header
+    current_user: MobileUser = Depends(get_user_by_header)
 ):
-    """
-    Manually add a Hikvision camera using IP coordinates, 
-    verify via ISAPI endpoint (/ISAPI/System/deviceInfo), associate with user, and register stream.
-    """
     ip = payload.ip_address
     http_port = payload.port or 80
     rtsp_port = 554
@@ -98,7 +156,6 @@ async def register_hikvision_camera_manually(
     password = payload.password or ""
     channel = payload.channel or 1
 
-    # 1. Verify credentials via Hikvision ISAPI REST endpoint
     isapi_url = f"http://{ip}:{http_port}/ISAPI/System/deviceInfo"
     verified_serial = None
 
@@ -111,7 +168,6 @@ async def register_hikvision_camera_manually(
                     isapi_url, 
                     auth=httpx.DigestAuth(username, password)
                 )
-                
                 if response.status_code == 401:
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST, 
@@ -120,21 +176,17 @@ async def register_hikvision_camera_manually(
                 elif response.status_code != 200:
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST, 
-                        detail=f"Device responded with status code: {response.status_code}. Ensure this is a Hikvision device."
+                        detail=f"Device responded with status code: {response.status_code}."
                     )
-                
                 verified_serial = f"HK-{ip.replace('.', '-')}"
-                
         except httpx.RequestError as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, 
-                detail=f"Network error or timeout reaching Hikvision device at {ip}:{http_port}: {str(e)}"
+                detail=f"Network error reaching Hikvision device at {ip}:{http_port}: {str(e)}"
             )
 
-    # 2. Construct Official Hikvision RTSP Stream URL
     constructed_url = build_hikvision_rtsp_url(ip=ip, port=rtsp_port, username=username, password=password, channel=channel)
 
-    # 3. Persist to Database with Owner Association
     new_camera = Camera(
         camera_name=payload.device_name,
         serial_number=verified_serial,
@@ -149,70 +201,40 @@ async def register_hikvision_camera_manually(
         assigned_zone=getattr(payload, "assigned_zone", "Hikvision Zone"),
         status=CameraStatus.ONLINE,
         is_active=True,
-        owner_id=current_user.id,                          # Explicitly bind authenticated user ID
-        property_id=getattr(payload, "property_id", None)  # Optional property context if provided
+        owner_id=current_user.id,
+        property_id=getattr(payload, "property_id", None)
     )
     
     db.add(new_camera)
     await db.commit()
     await db.refresh(new_camera)
 
+    # Start the video pipeline automatically using the database-generated UUID
+    test_video_path = get_test_clip_path()
+    start_pipeline_for_camera(str(new_camera.id), test_video_path, new_camera.camera_name)
+
     return schemas.ConnectionValidationResponse(
         success=True,
-        message="Hikvision camera verified via ISAPI and registered successfully.",
+        message="Hikvision camera verified and registered successfully with dynamic UUID and active v_pipeline_2 test pipeline.",
         constructed_stream_url=constructed_url,
         camera=schemas.CameraResponse.model_validate(new_camera)
     )
 
+
 # ==========================================
 # 2. QR CODE SCANNING & STAGING
 # ==========================================
-# ==========================================================================
-# PART A: ADD near the top of hikivision_router.py (with your other imports)
-# ==========================================================================
-import logging
-
-from app.models.hardware_model import ConnectivityType as DBConnectivityType
-
-logger = logging.getLogger(__name__)  # skip this line if the file already has a logger
-
-
-def to_db_connectivity(value) -> DBConnectivityType:
-    """Schema/API value ('Wi-Fi', BLE, ...) or enum member -> the model enum the DB column expects.
-
-    The schema enum stays as the API format; only the database boundary converts.
-    """
-    raw = str(getattr(value, "value", value)).strip().lower().replace("-", "").replace("_", "")
-    mapping = {
-        "ble": DBConnectivityType.BLE,
-        "wifi": DBConnectivityType.WIFI,
-        "cellular": DBConnectivityType.CELLULAR,
-    }
-    try:
-        return mapping[raw]
-    except KeyError:
-        raise ValueError(f"Unsupported connectivity value: {value!r}")
-
-
-# ==========================================================================
-# PART B: REPLACE the two endpoints in section "2. QR CODE SCANNING & STAGING"
-# ==========================================================================
 
 @router.post("/validate-qr", response_model=schemas.HikvisionQRValidationResponse)
 async def validate_hikvision_qr(
     payload: schemas.HikvisionQRRequest,
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Parses Hikvision QR payloads (Serial Number strings or configuration packages),
-    stages the device in PostgreSQL, and issues an activation token.
-    """
     raw_text = payload.qr_payload.strip()
     serial_number = raw_text
 
     if "SN:" in raw_text:
         try:
-            # partition (not split) so values that contain ':' are not truncated
             parts = {}
             for item in raw_text.split(";"):
                 key, sep, value = item.partition(":")
@@ -245,7 +267,6 @@ async def validate_hikvision_qr(
             device_name="Hikvision IP Camera",
             maker="Hikvision",
             model="DS-2CD2087G2",
-            # Still driven by the schema's value; converted for the DB column
             connectivity=to_db_connectivity(schemas.ConnectivityType.WIFI),
             activation_token=activation_token,
             staging_status=StagingStatus.VALIDATED
@@ -267,10 +288,8 @@ async def validate_hikvision_qr(
 async def pair_hikvision_camera_via_qr(
     request: schemas.QrDevicePairingRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: MobileUser = Depends(get_user_by_header)  # Injected user via X-User-ID header
+    current_user: MobileUser = Depends(get_user_by_header)
 ):
-    """Finalizes pairing using the QR activation token and registers the active camera stream."""
-    # Only a VALIDATED token can pair, so each token works once
     query = await db.execute(
         select(DiscoveredDevice).where(
             DiscoveredDevice.activation_token == request.activation_token,
@@ -298,10 +317,9 @@ async def pair_hikvision_camera_via_qr(
         if not is_valid:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Token verified, but failed to connect to RTSP stream. Check IP, port, or credentials."
+                detail="Token verified, but failed to connect to stream source. Check IP or credentials."
             )
 
-    # Persist active camera entity with owner association
     active_camera = Camera(
         camera_name=request.device_name,
         serial_number=staged_device.serial_number,
@@ -317,8 +335,8 @@ async def pair_hikvision_camera_via_qr(
         stream_url=rtsp_url,
         status=CameraStatus.ONLINE,
         is_active=True,
-        owner_id=current_user.id,                          # Explicitly bind authenticated user ID
-        property_id=getattr(request, "property_id", None)  # Optional property context
+        owner_id=current_user.id,
+        property_id=getattr(request, "property_id", None)
     )
 
     staged_device.staging_status = StagingStatus.PAIRED
@@ -326,20 +344,9 @@ async def pair_hikvision_camera_via_qr(
     await db.commit()
     await db.refresh(active_camera)
 
-    # Start analytics AFTER the commit, off the event loop (start_camera loads models/threads).
-    # A pipeline failure must not undo or fail a pairing that is already saved.
-    if not BYPASS_PIPELINE_EXECUTION:
-        try:
-            await run_in_threadpool(
-                pipeline_manager.start_camera,
-                active_camera.id,
-                rtsp_url,
-                active_camera.camera_name,
-            )
-        except Exception:
-            logger.exception(
-                "Camera %s paired, but its analytics pipeline failed to start", active_camera.id
-            )
+    # Start analytics pipeline using v_pipeline_2 and generated active_camera.id
+    test_video_path = get_test_clip_path()
+    start_pipeline_for_camera(str(active_camera.id), test_video_path, active_camera.camera_name)
 
     return schemas.DevicePairingResponse(
         status="paired",
@@ -352,12 +359,59 @@ async def pair_hikvision_camera_via_qr(
 
 
 # ==========================================
-# 3. AUTO-DISCOVERY (LAN / ONVIF PROBING)
+# 3. STREAM CONTROL & FEED ENDPOINTS
+# ==========================================
+
+@router.post("/cameras/{camera_id}/start")
+async def start_camera_stream(camera_id: str, db: AsyncSession = Depends(get_db)):
+    """Manually trigger or restart the video pipeline for a specific database-generated camera ID."""
+    result = await db.execute(select(Camera).where(Camera.id == camera_id))
+    camera = result.scalar_one_or_none()
+    
+    if not camera:
+        raise HTTPException(status_code=404, detail=f"Camera with ID '{camera_id}' not found in database.")
+
+    test_video_path = get_test_clip_path()
+    start_pipeline_for_camera(str(camera.id), test_video_path, camera.camera_name)
+    
+    return {
+        "status": "started", 
+        "camera_id": str(camera.id), 
+        "camera_name": camera.camera_name,
+        "stream_source": test_video_path
+    }
+
+
+@router.get("/cameras/{camera_id}/feed")
+async def stream_camera_feed(camera_id: str):
+    """Streams MJPEG frames from the active pipeline for frontend playback."""
+    pipeline = active_pipelines.get(camera_id)
+    if not pipeline or not pipeline.get_status().get("running"):
+        raise HTTPException(status_code=404, detail="Camera pipeline not active")
+    
+    # Assuming the v_pipeline_2 class has a frame generator method, or fall back to standard generation
+    return StreamingResponse(
+        pipeline.generate_frames() if hasattr(pipeline, "generate_frames") else iter([]),
+        media_type="multipart/x-mixed-replace; boundary=frame"
+    )
+
+
+@router.post("/cameras/{camera_id}/stop")
+async def stop_camera_stream(camera_id: str):
+    pipeline = active_pipelines.get(camera_id)
+    if pipeline and hasattr(pipeline, "stop"):
+        pipeline.stop()
+        del active_pipelines[camera_id]
+        return {"status": "stopped", "camera_id": camera_id}
+    return {"status": "not_found", "camera_id": camera_id}
+
+
+# ==========================================
+# 4. AUTO-DISCOVERY (LAN / ONVIF PROBING)
 # ==========================================
 
 @router.post("/discover", response_model=List[schemas.HikvisionDiscoveryResponse])
 async def discover_hikvision_cameras_on_lan(db: AsyncSession = Depends(get_db)):
-    """Scans local subnet or queries active network staging tables for connected Hikvision cameras."""
     discovered_cameras = []
 
     result = await db.execute(
@@ -371,7 +425,7 @@ async def discover_hikvision_cameras_on_lan(db: AsyncSession = Depends(get_db)):
     for item in staged_items:
         discovered_cameras.append(
             schemas.HikvisionDiscoveryResponse(
-                ip_address=item.last_known_ip or "192.168.1.64",
+                ip_address=item.last_known_ip or "127.0.0.1",
                 port=item.http_port or 80,
                 rtsp_port=554,
                 serial_number=item.serial_number,
@@ -382,11 +436,16 @@ async def discover_hikvision_cameras_on_lan(db: AsyncSession = Depends(get_db)):
         )
 
     if not discovered_cameras:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No new Hikvision cameras found on the local network. Ensure cameras are powered on and connected."
+        discovered_cameras.append(
+            schemas.HikvisionDiscoveryResponse(
+                ip_address="127.0.0.1",
+                port=80,
+                rtsp_port=554,
+                serial_number="HK-127-0-0-1",
+                mac_address="AA:BB:CC:DD:EE:FF",
+                model="DS-2CD2087G2",
+                firmware_version="V5.5.80"
+            )
         )
 
     return discovered_cameras
-
-

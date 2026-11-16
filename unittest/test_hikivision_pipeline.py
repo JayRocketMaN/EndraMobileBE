@@ -41,9 +41,6 @@ class HikvisionTestPipeline:
                 (0, 255, 0), 
                 2
             )
-
-            # Optional: Display the frame locally for visual confirmation during testing
-            # cv2.imshow(f"Camera Sandbox - {self.camera_id}", frame)
             
             # Control frame rate playback speed (~30 fps)
             if cv2.waitKey(30) & 0xFF == ord('q'):
@@ -57,11 +54,15 @@ class HikvisionTestPipeline:
         print(f"Test pipeline stopped for camera {self.camera_id}.")
 
 if __name__ == "__main__":
-    # Dynamically resolve absolute path to the local video file in the project root
+    # Dynamically resolve absolute path to livevid_crash0.mp4 in the project root
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    TEST_STREAM_URL = os.path.join(base_dir, "media", "evidence", "clips", "mov_bbb.mp4")
+    TEST_STREAM_URL = os.path.join(base_dir, "media", "evidence", "clips", "livevid_crash0.mp4")
     
-    pipeline = HikvisionTestPipeline(camera_id="test-hik-01", stream_url=TEST_STREAM_URL)
+    # Use the active frontend camera UUID matching your developer's test report
+    pipeline = HikvisionTestPipeline(
+        camera_id="b5481356-6bb0-4ee6-9ed4-72700c81676f", 
+        stream_url=TEST_STREAM_URL
+    )
     
     try:
         pipeline.start()
