@@ -3,6 +3,7 @@ import httpx
 import cv2
 import json
 import os
+import time
 import logging
 from typing import List, Optional
 
@@ -64,21 +65,31 @@ async def get_user_by_header(
 # ==========================================
 # UTILITY HELPER FUNCTIONS
 # ==========================================
-
 def get_test_clip_path() -> str:
-    """Dynamically resolves the absolute path to the local test video file."""
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    return os.path.join(base_dir, "media", "evidence", "clips", "livevid_crash0.mp4")
+    """Dynamically resolves the video path, checking environment fallback first."""
+    # 1. Check if an environment variable override is provided (e.g. public hosted video URL)
+    env_override = os.environ.get("FALLBACK_VIDEO_PATH")
+    if env_override:
+        return env_override
 
+    # 2. Default local fallback
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    local_path = os.path.join(base_dir, "media", "evidence", "clips", "livevid_crash0.mp4")
+    
+    if os.path.exists(local_path):
+        return local_path
+        
+    return local_path
 
 def build_hikvision_rtsp_url(ip: str, port: int = 554, username: str = "admin", password: str = "", channel: int = 1) -> str:
     """
-    Constructs official Hikvision RTSP stream URL, or falls back to the local test clip path 
-    if testing locally with sandbox IP addresses.
+    Constructs official Hikvision RTSP stream URL, or falls back to the test clip path / fallback URL 
+    if testing locally or running on cloud instances without physical local files.
     """
-    if ip in ["127.0.0.1", "localhost", "test"]:
+    if ip in ["127.0.0.1", "localhost", "test"] or os.environ.get("FALLBACK_VIDEO_PATH"):
         test_clip_path = get_test_clip_path()
-        if os.path.exists(test_clip_path):
+        # If it's a URL or local file that exists, return it
+        if test_clip_path.startswith(("http://", "https://", "rtsp://")) or os.path.exists(test_clip_path):
             return test_clip_path
             
     channel_code = f"{channel}01"
@@ -86,8 +97,9 @@ def build_hikvision_rtsp_url(ip: str, port: int = 554, username: str = "admin", 
 
 
 def verify_rtsp_credentials(rtsp_url: str, timeout_ms: int = 3000) -> bool:
-    """Attempts an RTSP or local file connection to verify stream accessibility."""
-    if os.path.exists(rtsp_url):
+    """Attempts an RTSP, HTTP stream, or local file connection to verify stream accessibility."""
+    # If the URL is an HTTP link or local file path, check accordingly
+    if rtsp_url.startswith(("http://", "https://")) or os.path.exists(rtsp_url):
         cap = cv2.VideoCapture(rtsp_url)
     else:
         options = f"rtsp_transport;tcp|timeout;{timeout_ms * 1000}|stimeout;{timeout_ms * 1000}"
@@ -138,7 +150,6 @@ def start_pipeline_for_camera(camera_id: str, stream_source: str, camera_name: s
         logger.info(f"Successfully started v_pipeline_2 for camera {camera_id}")
     except Exception:
         logger.exception("Failed to start v_pipeline_2 for camera %s", camera_id)
-
 
 # ==========================================
 # 1. MANUAL ENTRY METHOD VIA HIKVISION ISAPI
@@ -357,7 +368,6 @@ async def pair_hikvision_camera_via_qr(
         is_online=True
     )
 
-
 # ==========================================
 # 3. STREAM CONTROL & FEED ENDPOINTS
 # ==========================================
@@ -371,14 +381,16 @@ async def start_camera_stream(camera_id: str, db: AsyncSession = Depends(get_db)
     if not camera:
         raise HTTPException(status_code=404, detail=f"Camera with ID '{camera_id}' not found in database.")
 
-    test_video_path = get_test_clip_path()
-    start_pipeline_for_camera(str(camera.id), test_video_path, camera.camera_name)
+    # Use camera stream_url if valid (e.g. cloud URL or RTSP), otherwise use test clip / fallback path
+    stream_source = camera.stream_url if camera.stream_url else get_test_clip_path()
+    
+    start_pipeline_for_camera(str(camera.id), stream_source, camera.camera_name)
     
     return {
         "status": "started", 
         "camera_id": str(camera.id), 
         "camera_name": camera.camera_name,
-        "stream_source": test_video_path
+        "stream_source": stream_source
     }
 
 
@@ -389,9 +401,21 @@ async def stream_camera_feed(camera_id: str):
     if not pipeline or not pipeline.get_status().get("running"):
         raise HTTPException(status_code=404, detail="Camera pipeline not active")
     
-    # Assuming the v_pipeline_2 class has a frame generator method, or fall back to standard generation
+    # Fallback frame generator if v_pipeline_2 uses an internal loop or latest_frame attribute
+    def frame_generator():
+        while pipeline.get_status().get("running"):
+            frame = getattr(pipeline, "latest_frame", None)
+            if frame is not None:
+                success, encoded = cv2.imencode(".jpg", frame)
+                if success:
+                    yield (b"--frame\r\n"
+                           b"Content-Type: image/jpeg\r\n\r\n" + bytearray(encoded) + b"\r\n")
+            time.sleep(0.03)  # ~30 FPS pacing
+
+    generator = pipeline.generate_frames if hasattr(pipeline, "generate_frames") else frame_generator
+
     return StreamingResponse(
-        pipeline.generate_frames() if hasattr(pipeline, "generate_frames") else iter([]),
+        generator(),
         media_type="multipart/x-mixed-replace; boundary=frame"
     )
 

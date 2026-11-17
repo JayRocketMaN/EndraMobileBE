@@ -166,7 +166,10 @@ async def pipeline_telemetry_ingest(websocket: WebSocket):
             
             event_type = data.get("event_type")
             payload = data.get("payload", {})
-            camera_id = str(payload.get("camera_id", "5"))
+            
+            # Ensure camera_id is reliably extracted and cast to string for dictionary lookup
+            raw_cam_id = payload.get("camera_id")
+            camera_id = str(raw_cam_id) if raw_cam_id is not None else "56b08f73-ebda-4b87-9822-3398c74da081"
             
             # Broadcast the pipeline event to all connected clients viewing this camera
             await manager.broadcast_to_camera(camera_id, {

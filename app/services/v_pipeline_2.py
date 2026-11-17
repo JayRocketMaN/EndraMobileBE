@@ -1,49 +1,3 @@
-"""
-ENDRA video pipeline (single-file drop-in replacement)
-=======================================================
-
-One analytics core (YOLO seg + ByteTrack + baseline + Layer-2 VLM), two input
-modes that are kept strictly apart:
-
-  LIVE   rtsp:// | rtsps:// | rtmp:// | http(s):// | webcam index
-         - background reader thread, always analyses the NEWEST frame (no lag build-up)
-         - auto-reconnects when go2rtc / LetsView / the camera drops
-         - writes events to the DB and evidence to ENDRA_EVIDENCE_DIR
-
-  VIDEO  a file path (test footage)
-         - deterministic: every frame is analysed, nothing is dropped
-         - optional real-time pacing (for watching in Flutter) or max speed (for batch tests)
-         - NEVER writes to the DB by default; everything lands in
-           ENDRA_TEST_RUNS_DIR/<run_id>/ (events.jsonl, summary.json, VLM crops, evidence)
-         - waits for the VLM to finish before closing the run, so summary.json is complete
-
-The mode is auto-detected from the source string (override with mode="live"|"video").
-
-Headless test run (no API server needed):
-    python -m <your.module.path> path/to/clip.mp4 --all-tracks
-
-Environment variables (all optional):
-    ENDRA_YOLO_MODEL               yolo11n-seg.pt
-    ENDRA_YOLO_IMGSZ               inference size, e.g. 640 (smaller = faster)
-    ENDRA_EVIDENCE_DIR             ./media/evidence            (live evidence)
-    ENDRA_TEST_VIDEO_DIR           ./media/test_videos         (video mode paths must live here)
-    ENDRA_ALLOW_ANY_VIDEO_PATH     0                           (1 = allow paths outside that dir)
-    ENDRA_TEST_RUNS_DIR            ./media/test_runs
-    ENDRA_DATASET_DIR              ./media/dataset/hard_examples
-    ENDRA_COLLECT_HARD_EXAMPLES    0                           (1 = save uncertain frames for labeling)
-    ENDRA_VLM_MODEL                qwen2.5vl:3b
-    ENDRA_VLM_COOLDOWN_SEC         20     per-track cooldown (video seconds in video mode)
-    ENDRA_VLM_LOW_CONF             0.80   detections below this confidence go to the VLM
-    ENDRA_VLM_ALL_TRACKS           0      1 = also send every target track once per cooldown
-    ENDRA_VLM_GLOBAL_COOLDOWN_SEC  10     live only
-    ENDRA_TEST_VLM_MAX_PENDING     16     video mode VLM queue size
-    ENDRA_TEST_VLM_DRAIN_SEC       180    video mode: max wait for VLM at end of file
-    ENDRA_MONITOR_PUBLISH_SEC      0.5    min seconds between MONITOR_DEVICE_UPDATE per track
-    ENDRA_WS_INGEST_URL            ws://localhost:8000/api/v1/ws/ingest  (alias: TELEMETRY_WS_URL)
-    ENDRA_TELEMETRY                1      0 = do not publish WebSocket events at all
-    ENDRA_WS_INGEST_HEADERS        (none) extra headers for the ingest socket, e.g. "X-User-ID=5,X-Api-Key=abc"
-    ENDRA_LOG_LEVEL                INFO
-"""
 from __future__ import annotations
 
 import os
@@ -173,32 +127,46 @@ def detect_source_mode(source: Any) -> SourceMode:
     if text.isdigit() or text.lower().startswith(LIVE_SCHEMES):
         return SourceMode.LIVE
     return SourceMode.VIDEO
-
-
 def resolve_test_video(path: str) -> str:
-    """Resolve a test video path; by default it must live inside ENDRA_TEST_VIDEO_DIR."""
+    """Resolve a test video path, supporting direct cloud/http URLs or local files."""
+    path_str = str(path).strip()
+    
+    # 1. If a direct URL or fallback environment path is provided, allow it instantly
+    if path_str.lower().startswith(("http://", "https://", "rtsp://")):
+        return path_str
+
+    fallback = os.getenv("FALLBACK_VIDEO_PATH")
+    if not path_str and fallback:
+        return fallback
+
     base = os.path.realpath(TEST_VIDEO_DIR)
     allow_any = _env_bool("ENDRA_ALLOW_ANY_VIDEO_PATH", False)
 
-    if os.path.isabs(path):
-        candidate = path
+    if os.path.isabs(path_str):
+        candidate = path_str
     else:
-        candidate = os.path.join(base, path)
-        if allow_any and not os.path.isfile(candidate) and os.path.isfile(path):
-            candidate = path  # relative to the working directory (CLI use)
+        candidate = os.path.join(base, path_str)
+        if allow_any and not os.path.isfile(candidate) and os.path.isfile(path_str):
+            candidate = path_str  # relative to working directory
     candidate = os.path.realpath(candidate)
 
-    if not allow_any:
+    if not allow_any and not candidate.startswith(("http://", "https://")):
         try:
             inside = os.path.commonpath([base, candidate]) == base
-        except ValueError:  # different drives on Windows
+        except ValueError:
             inside = False
+        if not inside and fallback:
+            return fallback
         if not inside:
             raise ValueError(
                 f"Video must be inside {base} (or set ENDRA_ALLOW_ANY_VIDEO_PATH=1)."
             )
-    if not os.path.isfile(candidate):
+            
+    if not os.path.isfile(candidate) and not candidate.startswith(("http://", "https://")):
+        if fallback:
+            return fallback
         raise FileNotFoundError(f"Test video not found: {candidate}")
+        
     return candidate
 
 
