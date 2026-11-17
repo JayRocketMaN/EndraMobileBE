@@ -195,6 +195,14 @@ class LiveSource(FrameSource):
 
     def __init__(self, url: Any):
         text = str(url).strip()
+        
+        # Automatically override local/loopback/private RTSP URLs with the cloud fallback path if configured
+        if any(local_indicator in text for local_indicator in ["127.0.0.1", "localhost", "192.168."]):
+            fallback_path = os.getenv("FALLBACK_VIDEO_PATH")
+            if fallback_path:
+                text = fallback_path.strip()
+                logger.info(f"[LIVE] Local/Loopback IP detected. Overriding stream source with FALLBACK_VIDEO_PATH: {text}")
+
         self.url: Any = int(text) if text.isdigit() else text
         self.fps = 30.0
         self.finished = False
@@ -259,7 +267,6 @@ class LiveSource(FrameSource):
     def stop(self) -> None:
         self._running = False
 
-
 class VideoFileSource(FrameSource):
     """Deterministic file playback: every frame is returned, in order."""
 
@@ -267,17 +274,26 @@ class VideoFileSource(FrameSource):
 
     def __init__(self, path: str, loop: bool = False, realtime: bool = True,
                  frame_stride: int = 1, max_frames: Optional[int] = None):
-        self.path = path
+        text = str(path).strip()
+        
+        # Automatically override local, private network, or RTSP paths with the cloud fallback path if configured
+        if any(indicator in text for indicator in ["127.0.0.1", "localhost", "192.168.", "rtsp://"]):
+            fallback_path = os.getenv("FALLBACK_VIDEO_PATH")
+            if fallback_path:
+                text = fallback_path.strip()
+                logger.info(f"[VIDEO_SOURCE] Local/RTSP path detected. Overriding stream source with FALLBACK_VIDEO_PATH: {text}")
+
+        self.path = text
         self.loop = loop
         self.realtime = realtime
         self.frame_stride = max(1, int(frame_stride))
         self.max_frames = max_frames
         self.finished = False
 
-        self._cap = cv2.VideoCapture(path)
+        self._cap = cv2.VideoCapture(self.path)
         if not self._cap.isOpened():
             self._cap.release()
-            raise RuntimeError(f"OpenCV could not open video: {path}")
+            raise RuntimeError(f"OpenCV could not open video: {self.path}")
 
         fps = float(self._cap.get(cv2.CAP_PROP_FPS) or 0.0)
         self.fps = fps if fps > 1.0 else 30.0
@@ -326,7 +342,6 @@ class VideoFileSource(FrameSource):
             self._cap.release()
         except Exception:  # noqa: BLE001
             pass
-
 
 # ==========================================
 # 2. TELEMETRY (WebSocket to the backend ingest -> Flutter)
