@@ -187,7 +187,6 @@ class FrameSource(ABC):
     def stop(self) -> None:
         ...
 
-
 class LiveSource(FrameSource):
     """Reads in its own thread, keeps only the newest frame, reconnects on failure."""
 
@@ -249,6 +248,9 @@ class LiveSource(FrameSource):
                 now = time.time()
                 self.last_frame_at = now
                 with self._lock:
+                    # Clean up previous unread frame buffer to prevent memory buildup
+                    if self._latest is not None:
+                        del self._latest
                     self._latest = (frame, now)
             self.connected = False
             cap.release()
@@ -261,11 +263,15 @@ class LiveSource(FrameSource):
 
     def read(self) -> Optional[Tuple[Any, float]]:
         with self._lock:
-            packet, self._latest = self._latest, None  # each frame is handed out once
+            packet = self._latest
+            self._latest = None  # each frame is handed out once and reference cleared
         return packet
 
     def stop(self) -> None:
         self._running = False
+        with self._lock:
+            self._latest = None
+
 
 class VideoFileSource(FrameSource):
     """Deterministic file playback: every frame is returned, in order."""
@@ -305,7 +311,7 @@ class VideoFileSource(FrameSource):
         self._wall_start: Optional[float] = None
 
     def read(self) -> Optional[Tuple[Any, float]]:
-        while not self.finished:
+        while not self.finished and self._cap is not None:
             ok, frame = self._cap.read()
             if not ok:
                 if self.loop and self._index > 0:
@@ -319,9 +325,11 @@ class VideoFileSource(FrameSource):
             idx = self._index
             self._index += 1
             if self.frame_stride > 1 and idx % self.frame_stride:
+                del frame  # immediately free memory if frame is skipped by stride
                 continue
             if self.max_frames and self._returned >= self.max_frames:
                 self.finished = True
+                del frame
                 return None
 
             ts = self._ts_base + idx / self.fps
@@ -338,10 +346,13 @@ class VideoFileSource(FrameSource):
 
     def stop(self) -> None:
         self.finished = True
-        try:
-            self._cap.release()
-        except Exception:  # noqa: BLE001
-            pass
+        if hasattr(self, '_cap') and self._cap is not None:
+            try:
+                self._cap.release()
+            except Exception:  # noqa: BLE001
+                pass
+            finally:
+                self._cap = None
 
 # ==========================================
 # 2. TELEMETRY (WebSocket to the backend ingest -> Flutter)
