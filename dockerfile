@@ -28,9 +28,11 @@ ENV PATH=/root/.local/bin:$PATH
 
 WORKDIR /workspace
 
-# Install lightweight runtime dependencies (like curl for container health checks)
+# Install lightweight runtime dependencies and OpenCV system libraries (libGL and GLib)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    libgl1 \
+    libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy only the compiled Python site-packages from the builder stage
@@ -42,4 +44,4 @@ COPY . .
 EXPOSE 8000
 
 # Execute the FastAPI server using Uvicorn bound to all network interfaces
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
